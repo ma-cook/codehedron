@@ -2,31 +2,31 @@ import { Router } from 'express';
 import pool from '../db.js';
 
 export const router = Router();
+export const planItemRouter = Router({ mergeParams: true });
 
-export async function resolvePlanSpace(req, res, next) {
-  if (req.body?.spaceId || req.query?.spaceId) return next();
+export function resolvePlanSpace(req, res, next) {
+  const spaceId = req.body?.spaceId || req.query?.spaceId;
+  if (!spaceId) return res.status(400).json({ error: 'spaceId is required' });
+  next();
+}
+
+export async function resolvePlanItem(req, res, next) {
+  const { planId } = req.params;
+  if (!planId) return res.status(400).json({ error: 'planId is required' });
   try {
-    let row;
-    if (req.params.taskId) {
-      const result = await pool.query(
-        `SELECT space_id FROM plan_tasks WHERE id = $1`,
-        [req.params.taskId]
-      );
-      row = result.rows[0];
-    } else if (req.params.planId) {
-      const result = await pool.query(
-        `SELECT space_id FROM plans WHERE id = $1`,
-        [req.params.planId]
-      );
-      row = result.rows[0];
-    }
-    if (!row) return res.status(404).json({ error: 'Plan not found' });
+    const result = await pool.query(
+      `SELECT * FROM plans WHERE id = $1`,
+      [planId]
+    );
+    const plan = result.rows[0];
+    if (!plan) return res.status(404).json({ error: 'Plan not found' });
+    req.plan = plan;
     req.body = req.body || {};
-    req.body.spaceId = row.space_id;
+    req.body.spaceId = plan.space_id;
     next();
   } catch (err) {
-    console.error('Resolve plan space error:', err);
-    res.status(500).json({ error: 'Failed to resolve plan space' });
+    console.error('Resolve plan item error:', err);
+    res.status(500).json({ error: 'Failed to resolve plan' });
   }
 }
 
@@ -107,13 +107,14 @@ router.post('/', async (req, res) => {
 });
 
 // PATCH /api/plans/:planId — update plan title
-router.patch('/:planId', async (req, res) => {
+planItemRouter.patch('/', async (req, res) => {
   const { title } = req.body;
+  const plan = req.plan;
   try {
     const result = await pool.query(
       `UPDATE plans SET title = COALESCE($1, title), updated_at = NOW()
-       WHERE id = $2 RETURNING *`,
-      [title, req.params.planId]
+       WHERE id = $2 AND space_id = $3 RETURNING *`,
+      [title, plan.id, plan.space_id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Plan not found' });
     res.json(result.rows[0]);
@@ -124,27 +125,21 @@ router.patch('/:planId', async (req, res) => {
 });
 
 // POST /api/plans/:planId/tasks — add a task
-router.post('/:planId/tasks', async (req, res) => {
-  const { planId } = req.params;
-  const { text, userId, userName, userPicture } = req.body;
+planItemRouter.post('/tasks', async (req, res) => {
+  const { text, userId, userName, userPicture } = req.body || {};
   if (!text) return res.status(400).json({ error: 'text is required' });
+  const plan = req.plan;
 
   try {
-    // Get the space_id from the plan
-    const planResult = await pool.query(`SELECT space_id FROM plans WHERE id = $1`, [planId]);
-    if (planResult.rows.length === 0) return res.status(404).json({ error: 'Plan not found' });
-    const spaceId = planResult.rows[0].space_id;
-
-    // Get max sort_order
     const maxOrder = await pool.query(
       `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM plan_tasks WHERE plan_id = $1`,
-      [planId]
+      [plan.id]
     );
 
     const result = await pool.query(
       `INSERT INTO plan_tasks (plan_id, space_id, user_id, user_name, user_picture, text, sort_order)
        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [planId, spaceId, userId || 'anonymous', userName || 'Anonymous', userPicture || null, text, maxOrder.rows[0].next_order]
+      [plan.id, plan.space_id, userId || 'anonymous', userName || 'Anonymous', userPicture || null, text, maxOrder.rows[0].next_order]
     );
 
     res.status(201).json(result.rows[0]);
@@ -155,23 +150,24 @@ router.post('/:planId/tasks', async (req, res) => {
 });
 
 // PATCH /api/plans/:planId/tasks/:taskId — update task (status, text)
-router.patch('/:planId/tasks/:taskId', async (req, res) => {
+planItemRouter.patch('/tasks/:taskId', async (req, res) => {
   const { taskId } = req.params;
-  const { status } = req.body;
+  const { status } = req.body || {};
+  const plan = req.plan;
 
   try {
     let result;
     if (status === 'completed') {
       result = await pool.query(
         `UPDATE plan_tasks SET status = 'completed', completed_at = NOW()
-         WHERE id = $1 RETURNING *`,
-        [taskId]
+         WHERE id = $1 AND plan_id = $2 RETURNING *`,
+        [taskId, plan.id]
       );
     } else if (status === 'todo') {
       result = await pool.query(
         `UPDATE plan_tasks SET status = 'todo', completed_at = NULL
-         WHERE id = $1 RETURNING *`,
-        [taskId]
+         WHERE id = $1 AND plan_id = $2 RETURNING *`,
+        [taskId, plan.id]
       );
     } else {
       return res.status(400).json({ error: 'status must be "completed" or "todo"' });
@@ -186,13 +182,14 @@ router.patch('/:planId/tasks/:taskId', async (req, res) => {
 });
 
 // DELETE /api/plans/:planId/tasks/:taskId — remove a task
-router.delete('/:planId/tasks/:taskId', async (req, res) => {
+planItemRouter.delete('/tasks/:taskId', async (req, res) => {
   const { taskId } = req.params;
+  const plan = req.plan;
 
   try {
     const result = await pool.query(
-      `DELETE FROM plan_tasks WHERE id = $1 AND space_id = $2 RETURNING id`,
-      [taskId, req.body?.spaceId]
+      `DELETE FROM plan_tasks WHERE id = $1 AND plan_id = $2 RETURNING id`,
+      [taskId, plan.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
     res.json({ deleted: true, taskId });
