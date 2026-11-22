@@ -902,6 +902,10 @@ export async function sendWithRetrieval({
   // execution-time gate to block hallucinated calls to tools that are not in
   // the round's tool list.
   let currentToolNames = new Set();
+  // Staged tool delivery: round 1 sends only the classified task type's tool
+  // subset. Any set_mode call clears this so the model can always reach the
+  // full set; computeTools maps the name to the subset.
+  let taskTypeFilter = null;
 
   resetEditTracker();
   // Mark the run active so the scene can highlight files as they're edited.
@@ -939,6 +943,7 @@ export async function sendWithRetrieval({
 
   const taskType = globalRouter.classifyTaskType(messages, computeTools());
   console.log(`[sendWithRetrieval] Classified task type: ${taskType}`);
+  taskTypeFilter = taskType;
 
   // P4: seed structural outlines of likely target files BEFORE the first LLM
   // call. Code-gen tasks routinely burn the opening rounds just discovering
@@ -1185,7 +1190,7 @@ export async function sendWithRetrieval({
     let rateLimitRetriesLeft = 1;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools({ mode: currentMode });
+        const availableTools = computeTools({ mode: currentMode, taskType: taskTypeFilter });
         currentToolNames = new Set(availableTools.map(t => t.function.name));
         rawResult = await sendToZen({
           messages: currentMessages,
@@ -1485,12 +1490,15 @@ export async function sendWithRetrieval({
           const modeHint = currentMode === 'edit'
             ? ` You are in EDIT mode (${[...currentToolNames].filter(n => n !== 'set_mode').join(', ')} available). Call set_mode("research") to use search/list tools again.`
             : '';
+          const stageHint = taskTypeFilter && currentMode !== 'edit'
+            ? ' This round runs a reduced task-stage tool set. Call set_mode("research") to load the full tool set.'
+            : '';
           toolResults.push({
             tc,
             result: {
               success: false,
               blocked: true,
-              content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}${modeHint}]`,
+              content: `[Tool unavailable: ${tc.name} is not in this round's available tools.${generationHint}${modeHint}${stageHint}]`,
             },
             error: null,
           });
@@ -1518,6 +1526,9 @@ export async function sendWithRetrieval({
           }
           currentMode = targetMode;
           autoFlippedToEdit = false;
+          // Any set_mode call lifts the staged task-type gate — the model has
+          // asked for a different menu, so give it the full set from now on.
+          taskTypeFilter = null;
           console.warn(`[ToolRound] set_mode(${targetMode}) at round ${rounds + 1}`);
           onToolProgress?.({ tool: 'set_mode', index: idx + 1, total: totalTools, status: 'done' });
           const editToolList = 'edit, write, read_file, LSP verification (get_lsp_references/get_lsp_type_info/get_lsp_call_graph), set_mode';

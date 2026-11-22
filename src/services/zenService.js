@@ -187,290 +187,34 @@ When the user asks follow-up questions or adds more requirements, UPDATE the dia
 const FEW_SHOT_EXAMPLES = [
   {
     role: 'user',
-    content: 'Create a microservices e-commerce architecture'
+    content: 'Add user authentication with JWT to my app'
   },
   {
     role: 'assistant',
-    content: `\`\`\`merfolk
-graph3d "E-Commerce Architecture"
+    content: `I'll plan the work and draft the architecture. Here is the diagram of the new components:
 
-%% ── Root ──────────────────────────────────────────
-App{Component: E-Commerce App}
+\`\`\`merfolk
+graph3d "User Auth System"
 
-%% ── Frontend Components ───────────────────────────
-HomePage{Component: HomePage}
-ProductCatalog{Component: ProductCatalog}
-ShoppingCart{Component: ShoppingCart}
-CheckoutPage{Component: CheckoutPage}
-AdminDashboard{Component: AdminDashboard}
-UserAccount{Component: UserAccount}
+%% Existing root - referenced, not redefined
+App{Component: My App}
 
-%% ── Backend Services ──────────────────────────────
-APIGateway((Service: API Gateway))
-ProductService((Service: Product Service))
-OrderService((Service: Order Service))
-PaymentService((Service: Payment Service))
-InventoryService((Service: Inventory Service))
-NotificationService((Service: Notification Service))
-AuthService((Service: Auth Service))
+%% Planned nodes - NEW components are marked {planned: true}
+LoginPage{Component: Login Page} {planned: true}
+AuthService((Service: Auth Service)) {planned: true, codeFilePath: "src/services/auth.js"}
+JWTModule[Module: JWT] {planned: true, codeFilePath: "src/modules/jwt.js"}
+authStore[[Store: authStore]] {planned: true, codeFilePath: "src/stores/authStore.js"}
+useAuth[Hook: useAuth] {planned: true, codeFilePath: "src/hooks/useAuth.js"}
 
-%% ── Data Stores ───────────────────────────────────
-ProductDB[[Store: Product Database]]
-OrderDB[[Store: Order Database]]
-UserDB[[Store: User Database]]
-SessionStore[[Store: Session Store]]
+%% Connections use specific labels
+App --> LoginPage : "renders"
+LoginPage --> AuthService : "credentials"
+AuthService --> JWTModule : "signs tokens"
+AuthService --> authStore : "user, token"
+useAuth --> authStore : "{user, isAuthenticated}"
+AuthService -.-> JWTModule : "token expired"
 
-%% ── Functions ─────────────────────────────────────
-searchProducts[Function: searchProducts]
-addToCart[Function: addToCart]
-processCheckout[Function: processCheckout]
-validatePayment[Function: validatePayment]
-updateInventory[Function: updateInventory]
-sendEmail[Function: sendEmail]
-
-%% ── Hooks ─────────────────────────────────────────
-useCart[Hook: useCart]
-useAuth[Hook: useAuth]
-useProducts[Hook: useProducts]
-
-%% ── App renders all top-level pages ───────────────
-App --> HomePage : "renders"
-App --> ProductCatalog : "renders"
-App --> ShoppingCart : "renders"
-App --> CheckoutPage : "renders"
-App --> AdminDashboard : "renders"
-App --> UserAccount : "renders"
-
-%% ── Page components use services via API Gateway ──
-HomePage --> APIGateway : "fetches data"
-ProductCatalog --> APIGateway : "searches products"
-ShoppingCart --> APIGateway : "manages cart"
-CheckoutPage --> APIGateway : "places order"
-AdminDashboard --> APIGateway : "admin operations"
-UserAccount --> AuthService : "manages profile"
-
-%% ── API Gateway routes to services ────────────────
-APIGateway --> ProductService : "product queries"
-APIGateway --> OrderService : "order operations"
-APIGateway --> PaymentService : "payment processing"
-APIGateway --> InventoryService : "stock checks"
-APIGateway --> NotificationService : "user alerts"
-
-%% ── Services connect to data stores ───────────────
-ProductService --> ProductDB : "reads/writes"
-OrderService --> OrderDB : "creates orders"
-PaymentService --> OrderDB : "updates payment status"
-InventoryService --> ProductDB : "updates stock"
-AuthService --> UserDB : "authenticates"
-AuthService --> SessionStore : "manages sessions"
-
-%% ── Functions connect to their parent services ────
-searchProducts --> ProductService : "searches"
-addToCart --> ShoppingCart : "adds item"
-processCheckout --> OrderService : "creates order"
-validatePayment --> PaymentService : "validates"
-updateInventory --> InventoryService : "decrements stock"
-sendEmail --> NotificationService : "sends"
-
-%% ── Hooks provide data to components ──────────────
-useCart --> ShoppingCart : "cart state"
-useAuth --> UserAccount : "auth state"
-useProducts --> ProductCatalog : "product data"
-
-%% ── Control flow for async events ─────────────────
-OrderService -.-> NotificationService : "order confirmed"
-PaymentService -.-> NotificationService : "payment received"
-InventoryService -.-> NotificationService : "low stock"
-
-%% ── Flow Paths ────────────────────────────────────
-flowpath "Purchase Flow" : HomePage --> ProductCatalog --> ShoppingCart --> CheckoutPage --> APIGateway --> OrderService --> PaymentService --> OrderService --> NotificationService
-flowpath "Admin Flow" : AdminDashboard --> APIGateway --> ProductService --> ProductDB
-flowpath "Auth Flow" : UserAccount --> AuthService --> UserDB --> SessionStore
-\`\`\``
-  },
-  {
-    role: 'user',
-    content: 'Design a real-time chat application'
-  },
-  {
-    role: 'assistant',
-    content: `\`\`\`merfolk
-graph3d "Real-Time Chat App"
-
-%% ── Root ──────────────────────────────────────────
-App{Component: Chat Application}
-
-%% ── Frontend Components ───────────────────────────
-LoginScreen{Component: Login Screen}
-ChatRoom{Component: Chat Room}
-UserList{Component: User List}
-MessagePanel{Component: Message Panel}
-SettingsPage{Component: Settings Page}
-
-%% ── Backend Services ──────────────────────────────
-AuthService((Service: Auth Service))
-ChatService((Service: Chat Service))
-PresenceService((Service: Presence Service))
-FileService((Service: File Service))
-
-%% ── Data Stores ───────────────────────────────────
-MessageDB[[Store: Message Database]]
-UserDB[[Store: User Database]]
-ChannelStore[[Store: Channel Store]]
-
-%% ── Functions ─────────────────────────────────────
-sendMessage[Function: sendMessage]
-fetchMessages[Function: fetchMessages]
-createChannel[Function: createChannel]
-uploadFile[Function: uploadFile]
-
-%% ── Hooks ─────────────────────────────────────────
-useMessages[Hook: useMessages]
-useOnlineUsers[Hook: useOnlineUsers]
-
-%% ── App renders all screens ───────────────────────
-App --> LoginScreen : "renders"
-App --> ChatRoom : "renders"
-App --> SettingsPage : "renders"
-
-%% ── Chat Room contains sub-components ─────────────
-ChatRoom --> UserList : "shows"
-ChatRoom --> MessagePanel : "shows"
-
-%% ── Components connect to services ────────────────
-LoginScreen --> AuthService : "authenticates"
-ChatRoom --> ChatService : "sends/receives"
-UserList --> PresenceService : "tracks online"
-MessagePanel --> ChatService : "loads history"
-SettingsPage --> AuthService : "updates profile"
-
-%% ── Services connect to stores ────────────────────
-ChatService --> MessageDB : "stores messages"
-ChatService --> ChannelStore : "manages channels"
-AuthService --> UserDB : "user accounts"
-PresenceService --> UserDB : "reads profiles"
-FileService --> MessageDB : "attaches files"
-
-%% ── Functions connect to their context ────────────
-sendMessage --> MessagePanel : "triggers"
-fetchMessages --> MessagePanel : "loads"
-createChannel --> ChatService : "creates"
-uploadFile --> FileService : "uploads"
-
-%% ── Hooks provide data to components ──────────────
-useMessages --> MessagePanel : "message state"
-useOnlineUsers --> UserList : "presence state"
-
-%% ── Control flow for real-time events ─────────────
-ChatService -.-> MessagePanel : "new message"
-PresenceService -.-> UserList : "user joined/left"
-
-%% ── Flow Paths ────────────────────────────────────
-flowpath "Message Flow" : MessagePanel --> sendMessage --> ChatService --> MessageDB --> MessagePanel
-flowpath "Login Flow" : LoginScreen --> AuthService --> UserDB --> ChatRoom
-flowpath "File Upload" : MessagePanel --> uploadFile --> FileService --> MessageDB
-\`\`\``
-  },
-  {
-    role: 'user',
-    content: 'Create a React component library with hooks and state management'
-  },
-  {
-    role: 'assistant',
-    content: `\`\`\`merfolk
-graph3d "React Component Library"
-
-%% ── Root ──────────────────────────────────────────
-App{Component: Component Library} {codeFilePath: "src/App.jsx", fileSize: "1850"}
-App_file[Function: App] {codeFilePath: "src/App.jsx", exports: "default", fileSize: "1850", htmlElements: "div", cssClasses: "library-root"}
-App_file -.-> App : "contains"
-
-%% ── Core Components ───────────────────────────────
-Button{Component: Button} {codeFilePath: "src/components/Button.tsx", fileSize: "2400", htmlElements: "button,span", cssClasses: "btn,btn-primary,btn-disabled"}
-Modal{Component: Modal} {codeFilePath: "src/components/Modal.tsx", fileSize: "3100", htmlElements: "div,button", cssClasses: "modal-overlay,modal-content,modal-close"}
-DataTable{Component: DataTable} {codeFilePath: "src/components/DataTable.tsx", fileSize: "4200", htmlElements: "table,thead,tbody,tr,td,th,input", cssClasses: "data-table,sortable-header,cell"}
-Form{Component: Form} {codeFilePath: "src/components/Form.tsx", fileSize: "2800", htmlElements: "form,input,button,label", cssClasses: "form-group,form-error,form-submit"}
-Toast{Component: Toast} {codeFilePath: "src/components/Toast.tsx", fileSize: "1200", htmlElements: "div,span", cssClasses: "toast,toast-success,toast-error"}
-Dropdown{Component: Dropdown} {codeFilePath: "src/components/Dropdown.tsx", fileSize: "1900", htmlElements: "div,ul,li,button", cssClasses: "dropdown,dropdown-menu,dropdown-item"}
-
-%% ── Component Internal Functions ──────────────────
-handleClick[Function: handleClick] {codeFilePath: "src/components/Button.tsx"}
-handleOverlayClick[Function: handleOverlayClick] {codeFilePath: "src/components/Modal.tsx"}
-handleSort[Function: handleSort] {codeFilePath: "src/components/DataTable.tsx"}
-validateField[Function: validateField] {codeFilePath: "src/components/Form.tsx"}
-Button -.-> handleClick : "event handler"
-Modal -.-> handleOverlayClick : "event handler"
-DataTable -.-> handleSort : "event handler"
-Form -.-> validateField : "event handler"
-
-%% ── Hooks ─────────────────────────────────────────
-useTheme[Hook: useTheme] {codeFilePath: "src/hooks/useTheme.ts", fileSize: "680", typescriptType: "{theme: Theme, toggleTheme: fn}"}
-useForm[Hook: useForm] {codeFilePath: "src/hooks/useForm.ts", fileSize: "1200", typescriptType: "{values, errors, handleChange, handleSubmit}"}
-useModal[Hook: useModal] {codeFilePath: "src/hooks/useModal.ts", fileSize: "420", typescriptType: "{isOpen, open, close}"}
-useTableData[Hook: useTableData] {codeFilePath: "src/hooks/useTableData.ts", fileSize: "1800", typescriptType: "{data, sort, filter, pagination}"}
-
-%% ── State Stores ──────────────────────────────────
-ThemeStore[[Store: Theme Store]] {codeFilePath: "src/stores/themeStore.ts", fileSize: "520", storeProperties: "theme, mode, setTheme, toggleMode"}
-FormStore[[Store: Form Store]] {codeFilePath: "src/stores/formStore.ts", fileSize: "780", storeProperties: "fields, dirty, submitting, validate, submit"}
-
-%% ── Utility Functions ─────────────────────────────
-formatDate[Function: formatDate] {codeFilePath: "src/utils/format.ts", fileSize: "340"}
-validateInput[Function: validateInput] {codeFilePath: "src/utils/validate.ts", fileSize: "890"}
-debounce[Function: debounce] {codeFilePath: "src/utils/debounce.ts", fileSize: "210"}
-
-%% ── Utility File Containers ───────────────────────
-format_file[Function: format] {codeFilePath: "src/utils/format.ts", exports: "formatDate,formatCurrency,formatNumber", fileSize: "1200"}
-format_file -.-> formatDate : "contains"
-validate_file[Function: validate] {codeFilePath: "src/utils/validate.ts", exports: "validateInput,validateEmail,validateRequired", fileSize: "1800"}
-validate_file -.-> validateInput : "contains"
-debounce_file[Function: debounce] {codeFilePath: "src/utils/debounce.ts", exports: "default", fileSize: "210"}
-debounce_file -.-> debounce : "contains"
-
-%% ── External Libraries ────────────────────────────
-ReactLib<Library: React>
-styledComponents<Library: styled-components>
-
-%% ── App exports all components ────────────────────
-App --> Button : "exports"
-App --> Modal : "exports"
-App --> DataTable : "exports"
-App --> Form : "exports"
-App --> Toast : "exports"
-App --> Dropdown : "exports"
-
-%% ── Components use hooks with destructured values ─
-Button -.-> useTheme : "{theme, toggleTheme}"
-Modal -.-> useModal : "{isOpen, close}"
-DataTable -.-> useTableData : "{data, sort, filter}"
-Form -.-> useForm : "{values, errors, handleChange, handleSubmit}"
-Toast -.-> useTheme : "{theme}"
-
-%% ── Hooks connect to stores with properties ───────
-useTheme --> ThemeStore : "theme, mode, setTheme()"
-useForm --> FormStore : "fields, dirty, validate()"
-useTableData --> ThemeStore : "theme"
-
-%% ── Functions used by components ──────────────────
-Form --> validateInput : "validates email, required fields"
-DataTable --> formatDate : "formats date cells"
-DataTable --> debounce : "search input debounce"
-
-%% ── Component composition ─────────────────────────
-Modal *--> Button : "cancel, confirm"
-Form *--> Button : "submit"
-Dropdown *--> Button : "trigger"
-
-%% ── Library dependencies ──────────────────────────
-Button --> ReactLib : "uses"
-Modal --> ReactLib : "uses"
-DataTable --> ReactLib : "uses"
-Form --> ReactLib : "uses"
-Button --> styledComponents : "styles"
-Modal --> styledComponents : "styles"
-
-%% ── Flow Paths ────────────────────────────────────
-flowpath "Theme Flow" : App --> useTheme --> ThemeStore --> Button --> styledComponents
-flowpath "Form Submit" : Form --> useForm --> FormStore --> validateInput --> Button
+flowpath "Login Flow" : LoginPage --> AuthService --> JWTModule --> authStore
 \`\`\``
   }
 ];

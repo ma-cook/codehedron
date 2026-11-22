@@ -49,19 +49,19 @@ function hasCommunities() {
 export const CONTROL_TOOLS = [
   new ToolDefinition({
     name: 'set_mode',
-    description: 'Tell the harness which tool set to make available next round. "research" = all search/read/graph tools. "edit" = only edit, write, read_file, LSP verification tools, and set_mode. Call set_mode("edit") once you have located the exact text for every change you intend to make. If an edit needs more information or verification fails, call set_mode("research") to search again, then set_mode("edit") to resume editing.',
+    description: 'Switch the harness tool set for the next round. "research" = all search/read/graph tools. "edit" = only edit, write, read_file, LSP verification, and set_mode. Call set_mode("edit") once you know the exact text for every change; set_mode("research") to search again.',
     parameters: {
-      mode: { type: 'string', description: '"research" (all search/read tools) or "edit" (only edit/write/read_file + LSP verification)' },
+      mode: { type: 'string', description: '"research" or "edit"' },
     },
     required: ['mode'],
   }),
   new ToolDefinition({
     name: 'ask_user',
-    description: 'Ask the user a clarifying question and WAIT for their answer before continuing. Use this instead of guessing when a genuine ambiguity would change what you build or edit — e.g. which of two approaches to take, which file to modify, or an undefined requirement. Prefer ONE well-formed question with mutually exclusive options. Do not use it to ask permission to proceed, to confirm an approach you already recommended, or for anything you can reasonably decide yourself. Ask at most once per decision point.',
+    description: 'Ask the user ONE clarifying question and wait for their answer. Use only when a genuine ambiguity would change what you build; prefer mutually exclusive options. Not for permission or decisions you can make yourself.',
     parameters: {
-      question: { type: 'string', description: 'The single question to ask. Keep it short and specific.' },
-      options: { type: 'string', required: false, description: 'Optional JSON array of 2-4 short option strings the user can pick (e.g. \'["Use the existing store","Create a new module","Smallest change only"]\'). Omit to allow a free-text answer.' },
-      context: { type: 'string', required: false, description: 'Optional one-line note on why you are asking / what you already know, shown under the question.' },
+      question: { type: 'string', description: 'The single question, short and specific.' },
+      options: { type: 'string', required: false, description: 'Optional JSON array of 2-4 short option strings, e.g. ["Option A","Option B"]. Omit for free text.' },
+      context: { type: 'string', required: false, description: 'Optional one-line note shown under the question.' },
     },
     required: ['question'],
   }),
@@ -70,17 +70,17 @@ export const CONTROL_TOOLS = [
 export const NAVIGATION_TOOLS = [
   new ToolDefinition({
     name: 'quick_look',
-    description: 'Quick preview of a file — shows the first N lines (and optionally last N lines). Faster than read_file for checking imports, exports, or overall structure without loading the entire file.',
+    description: 'Preview the first/last N lines of a file. Faster than read_file for checking imports, exports, or structure.',
     parameters: {
       path: { type: 'string', description: 'File path relative to repo root' },
-      head: { type: 'number', description: 'Number of lines from the top (default 40)' },
-      tail: { type: 'number', description: 'Number of lines from the bottom (default 20, 0 to disable)' },
+      head: { type: 'number', description: 'Lines from the top (default 40)' },
+      tail: { type: 'number', description: 'Lines from the bottom (default 20, 0 disables)' },
     },
     required: ['path'],
   }),
   new ToolDefinition({
     name: 'file_outline',
-    description: 'Get a structural outline of a file: function names, component names, exports, hooks, state variables, and their line numbers. Use this FIRST to understand file structure before reading full content.',
+    description: 'Structural outline of a file: functions, components, exports, hooks, state, with line numbers. Use FIRST before reading a file fully.',
     parameters: {
       path: { type: 'string', description: 'File path relative to repo root' },
     },
@@ -88,24 +88,24 @@ export const NAVIGATION_TOOLS = [
   }),
   new ToolDefinition({
     name: 'read_file',
-    description: 'Read the contents of a file from the repository. Returns up to 8000 lines by default. Each line is prefixed with its line number. Use offset to read later sections of large files.',
+    description: 'Read file contents. Up to 8000 lines by default, lines prefixed with line numbers. Use offset/limit for large files.',
     parameters: {
       path: { type: 'string', description: 'File path relative to repo root' },
-      offset: { type: 'number', description: 'Line number to start reading from (default 1)' },
-      limit: { type: 'number', description: 'Max lines to return (default 8000)' },
+      offset: { type: 'number', description: 'Line to start from (default 1)' },
+      limit: { type: 'number', description: 'Max lines (default 8000)' },
     },
     required: ['path'],
   }),
   new ToolDefinition({
     name: 'list_files',
-    description: 'List files in a directory. Returns file names and subdirectories.',
+    description: 'List files and subdirectories in a directory.',
     parameters: {
       path: { type: 'string', description: 'Directory path relative to repo root. Use "" for root.' },
     },
   }),
   new ToolDefinition({
     name: 'search_code',
-    description: 'Search for files matching a pattern or containing specific text. Returns matching file paths and graph context.',
+    description: 'Search the repo for files matching a pattern or containing text. Returns matching paths and graph context.',
     parameters: {
       pattern: { type: 'string', description: 'Search term or glob pattern' },
     },
@@ -116,7 +116,7 @@ export const NAVIGATION_TOOLS = [
 export const GRAPH_TOOLS = [
   new ToolDefinition({
     name: 'get_node_info',
-    description: 'Get full details about a component/function/store in the diagram: its type, file path, all connections, parent, and children.',
+    description: 'Full details for a diagram node: type, file path, connections, parent, children.',
     parameters: {
       nodeId: { type: 'string', description: 'The node ID from the diagram' },
     },
@@ -124,7 +124,7 @@ export const GRAPH_TOOLS = [
   }),
   new ToolDefinition({
     name: 'get_dependencies',
-    description: 'Find what depends on a node (upstream) or what the node depends on (downstream).',
+    description: 'Show what depends on a node (upstream) or what it depends on (downstream).',
     parameters: {
       nodeId: { type: 'string', description: 'The node ID to check dependencies for' },
       direction: { type: 'string', enum: ['upstream', 'downstream', 'both'], description: '"upstream", "downstream", or "both" (default)' },
@@ -133,7 +133,7 @@ export const GRAPH_TOOLS = [
   }),
   new ToolDefinition({
     name: 'find_path',
-    description: 'Find the shortest data-flow path between two components in the diagram.',
+    description: 'Shortest data-flow path between two diagram nodes.',
     parameters: {
       source: { type: 'string', description: 'Starting node ID' },
       target: { type: 'string', description: 'Ending node ID' },
@@ -142,7 +142,7 @@ export const GRAPH_TOOLS = [
   }),
   new ToolDefinition({
     name: 'search_nodes',
-    description: 'Search for components, functions, stores, or hooks by name or type in the diagram.',
+    description: 'Search diagram nodes by name, type, or ID.',
     parameters: {
       query: { type: 'string', description: 'Search term matching node names, types, and IDs' },
     },
@@ -228,7 +228,7 @@ export const LSP_TOOLS = [
 export const MODIFICATION_TOOLS = [
   new ToolDefinition({
     name: 'edit',
-    description: 'Make a targeted edit to a file by replacing an exact string match. Use for modifications — more precise than regenerating the whole file. You MUST call read_file first to get the current content.',
+    description: 'Replace an exact string in a file — more precise than regenerating a file. You MUST call read_file first to get the current content.',
     parameters: {
       filePath: { type: 'string', description: 'File path relative to repo root' },
       oldString: { type: 'string', description: 'The exact string to find and replace' },
@@ -238,7 +238,7 @@ export const MODIFICATION_TOOLS = [
   }),
   new ToolDefinition({
     name: 'write',
-    description: 'Create a NEW file that does not already exist in the repository. The tool REJECTS paths that already exist — do not attempt it on existing files. For modifying existing files, use edit instead.',
+    description: 'Create a NEW file. Rejects paths that already exist — use edit for existing files.',
     parameters: {
       filePath: { type: 'string', description: 'File path relative to repo root' },
       content: { type: 'string', description: 'The complete file content' },
@@ -250,7 +250,7 @@ export const MODIFICATION_TOOLS = [
 export const SUB_AGENT_TOOL = [
   new ToolDefinition({
     name: 'task',
-    description: 'Spawn a sub-agent to research a question about the codebase. The sub-agent can read files, search code, and query the graph — but cannot modify anything.',
+    description: 'Spawn a read-only sub-agent to research a codebase question (reads files, searches code, queries the graph; cannot modify).',
     parameters: {
       prompt: { type: 'string', description: 'Clear, specific research question for the sub-agent' },
     },
@@ -261,7 +261,7 @@ export const SUB_AGENT_TOOL = [
 export const PLAN_TOOLS = [
   new ToolDefinition({
     name: 'create_plan',
-    description: 'Create a new task plan. Use this when the user\'s request has multiple actions or steps. Call this first, then add_task for each step.',
+    description: 'Start a new task plan for multi-step requests. Call first, then add_task per step.',
     parameters: {
       title: { type: 'string', description: 'Short title for the plan (e.g. "Refactor auth module")' },
     },
@@ -269,7 +269,7 @@ export const PLAN_TOOLS = [
   }),
   new ToolDefinition({
     name: 'add_task',
-    description: 'Add a task to the active plan. Call create_plan first if no plan exists.',
+    description: 'Add a task to the active plan. Call create_plan first if none exists.',
     parameters: {
       text: { type: 'string', description: 'Description of the task to add' },
     },
@@ -277,7 +277,7 @@ export const PLAN_TOOLS = [
   }),
   new ToolDefinition({
     name: 'complete_task',
-    description: 'Mark a task as completed. You can pass the task text (partial match) or the task ID.',
+    description: 'Mark a task completed (task text partial match or ID).',
     parameters: {
       task: { type: 'string', description: 'Task text (partial match) or task ID to complete' },
     },
@@ -285,7 +285,7 @@ export const PLAN_TOOLS = [
   }),
   new ToolDefinition({
     name: 'get_plan',
-    description: 'View the current active plan and its tasks. Use this to check what tasks exist and which are done.',
+    description: 'View the active plan and its tasks.',
     parameters: {},
   }),
 ];
@@ -293,12 +293,12 @@ export const PLAN_TOOLS = [
 export const SKILL_MANAGEMENT_TOOLS = [
   new ToolDefinition({
     name: 'list_skills',
-    description: 'List all available skills and their descriptions. Use this to discover what context sources and tool sets are available.',
+    description: 'List available skills and their descriptions.',
     parameters: {},
   }),
   new ToolDefinition({
     name: 'activate_skill',
-    description: 'Activate a skill by name to load its instructions and make its tools available. Use list_skills first to see available skills.',
+    description: 'Activate a skill by name to load its instructions and tools.',
     parameters: {
       skill_name: { type: 'string', description: 'The name of the skill to activate' },
     },
@@ -306,7 +306,7 @@ export const SKILL_MANAGEMENT_TOOLS = [
   }),
   new ToolDefinition({
     name: 'deactivate_skill',
-    description: 'Deactivate a skill by name to remove its instructions and tools from the current session.',
+    description: 'Deactivate a skill, removing its instructions and tools from the session.',
     parameters: {
       skill_name: { type: 'string', description: 'The name of the skill to deactivate' },
     },
@@ -333,8 +333,29 @@ const EXPLORATION_TOOL_NAMES = new Set([
   'task',
 ]);
 
+// Staged tool delivery: round 1 sends only the tools the classified task type
+// plausibly needs, so the model reasons over a short menu instead of the full
+// one. The orchestrator clears the gate the moment the model calls set_mode,
+// which returns the full set — so nothing is unreachable. Unknown or
+// unclassified task types fall through to the full set.
+const TASK_TYPE_TOOLS = new Map([
+  ['plan', new Set([
+    'set_mode', 'ask_user', 'task',
+    'create_plan', 'add_task', 'complete_task', 'get_plan',
+  ])],
+  ['code-gen', new Set([
+    'set_mode', 'ask_user',
+    'search_code', 'list_files', 'file_outline', 'quick_look', 'read_file',
+    'edit', 'write',
+    'create_plan', 'add_task', 'complete_task', 'get_plan',
+  ])],
+]);
+
 export function computeTools(opts = {}) {
-  const { excludeExplorationTools = false, excludeReadTool = false, mode = 'research' } = opts;
+  const {
+    excludeExplorationTools = false, excludeReadTool = false,
+    mode = 'research', taskType = null,
+  } = opts;
   const always = [...SKILL_MANAGEMENT_TOOLS, ...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...PLAN_TOOLS];
   const conditional = [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL];
   const available = [];
@@ -357,6 +378,11 @@ export function computeTools(opts = {}) {
   }
 
   let result = available;
+
+  const taskSubset = taskType ? TASK_TYPE_TOOLS.get(taskType) : null;
+  if (taskSubset) {
+    result = result.filter(t => taskSubset.has(t.function.name));
+  }
 
   if (excludeExplorationTools) {
     result = result.filter(t => !EXPLORATION_TOOL_NAMES.has(t.function.name));
