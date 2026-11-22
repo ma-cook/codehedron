@@ -1,6 +1,7 @@
 export const SPACE_CHILD_TABLES = [
   'user_presence',
   'chat_messages',
+  'workflow_tickets',
   'plan_tasks',
   'plans',
   'objects',

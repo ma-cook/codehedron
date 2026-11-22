@@ -74,6 +74,12 @@ import {
   resolvePlanSpace,
   resolvePlanItem,
 } from './api/plans.js';
+import {
+  router as workflowRouter,
+  ticketItemRouter,
+  resolveWorkflowSpace,
+  resolveWorkflowTicket,
+} from './api/workflow.js';
 import { router as githubRouter } from './api/github.js';
 import { router as scanJobsRouter } from './api/scanJobs.js';
 import { router as adminRouter } from './api/admin.js';
@@ -92,6 +98,8 @@ app.use('/api/bulk', authenticate, requireSpaceReadAccess, bulkRouter);
 app.use('/api/updates', authenticate, updatesRouter);
 app.use('/api/plans/:planId', authenticate, resolvePlanItem, requireSpaceReadAccess, planItemRouter);
 app.use('/api/plans', optionalAuth, resolvePlanSpace, requireSpaceReadAccess, plansRouter);
+app.use('/api/workflow/tickets/:ticketId', authenticate, resolveWorkflowTicket, requireSpaceReadAccess, ticketItemRouter);
+app.use('/api/workflow/tickets', optionalAuth, resolveWorkflowSpace, requireSpaceReadAccess, workflowRouter);
 app.use('/api/github', authenticate, githubRouter);
 app.use('/api/scan-jobs', authenticate, scanJobsRouter);
 app.use('/api/feedback', authenticate, feedbackRouter);
@@ -114,6 +122,7 @@ app.use('/api/zen', authenticate, zenRouter);
 import { registerChatHandlers } from './ws/chat.js';
 import { registerSignalingHandlers } from './ws/signaling.js';
 import { registerPlanHandlers } from './ws/plans.js';
+import { registerWorkflowHandlers } from './ws/workflow.js';
 
 // Background-scan orchestration (main API is the always-on service)
 import { startScanSteward } from './workers/scanSteward.js';
@@ -123,6 +132,7 @@ io.on('connection', (socket) => {
   registerChatHandlers(io, socket);
   registerSignalingHandlers(io, socket);
   registerPlanHandlers(io, socket);
+  registerWorkflowHandlers(io, socket);
 });
 
 // Start
