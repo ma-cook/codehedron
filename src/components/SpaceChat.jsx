@@ -42,6 +42,7 @@ import { uploadMarkdownToStorage } from '../services/storageService';
 import { saveDiagramDigest } from '../services/graphPersistence';
 import { createTicket, updateTicket, emitTicketCreated, emitTicketUpdated } from '../services/workflowService';
 import { buildWorkflowContext } from '../services/workflowCoordination';
+import { resolvePlanRunRequest } from '../services/planExecution';
 import usePlanStore from '../stores/planStore';
 import {
   isEncryptedSecret,
@@ -808,6 +809,13 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     const text = input.trim();
     if (!text || streaming) return;
 
+    const planRun = resolvePlanRunRequest(text, usePlanStore.getState());
+    if (planRun?.error) {
+      setLlmError(planRun.error);
+      return;
+    }
+    const userRequest = planRun?.prompt || text;
+
     setLlmError(null);
     setInput('');
     isNearBottomRef.current = true;
@@ -837,8 +845,8 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         userId: user?.uid || user?.sub,
         userName: user?.name || 'Anonymous',
         userPicture: user?.picture || null,
-        promptPreview: text.slice(0, 120),
-        promptFull: text,
+        promptPreview: (planRun?.task?.text || text).slice(0, 120),
+        promptFull: userRequest,
       });
       emitTicketCreated(workflowTicket);
     } catch (ticketErr) {
@@ -901,7 +909,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       console.log('[CodeSend] Building code gen messages...');
       const workflowCtx = buildWorkflowContext(spaceId, user?.uid || user?.sub);
       const codeGenMessages = await buildCodeGenMessages({
-        userRequest: text,
+        userRequest,
         sceneObjects,
         techStack,
         repoContext,
