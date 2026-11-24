@@ -63,6 +63,23 @@ const defaultChatLayout = {
   height: SPACE_CHAT_DEFAULT_HEIGHT,
 };
 
+function isArchivedWindowConfigured(windowId) {
+  if (!windowId) return false;
+  try {
+    const providerId = JSON.parse(localStorage.getItem(`llm:window:${windowId}:providerId`) || 'null');
+    const apiKey = localStorage.getItem(`llm:window:${windowId}:apiKey`);
+    const selectedModel = JSON.parse(localStorage.getItem(`llm:window:${windowId}:selectedModel`) || 'null');
+    return !!(providerId && apiKey && selectedModel);
+  } catch {
+    return false;
+  }
+}
+
+function isPrimaryWindowConfigured() {
+  const llm = useLlmStore.getState();
+  return !!(llm.providerId && llm.apiKey && llm.selectedModel);
+}
+
 const ChatWindowInstance = memo(({ windowId = 0, ...props }) => {
   const layout = useChatWindowStore(
     (state) => state.layouts[windowId] || defaultChatLayout
@@ -91,6 +108,7 @@ import WorkflowModal from './WorkflowModal';
 import PlanModal from './PlanModal';
 import useWorkflowStore from '../stores/workflowStore';
 import usePlanStore from '../stores/planStore';
+import useLlmStore from '../stores/llmStore';
 import './RepoAnalysisOverlay.css';
 import './TopBar.css';
 import useEarthSettingsStore from '../stores/earthSettingsStore';
@@ -920,6 +938,42 @@ const UIOverlay = ({
     const layout = cascadeWindowLayout(anchor);
     useChatWindowStore.getState().setLayout(id, layout);
     setChatWindows((prev) => (prev.includes(id) ? prev : [...prev, id]));
+  }, [currentSpaceId, chatWindows, cascadeWindowLayout]);
+
+  const handleEnsurePlanWorkers = useCallback(() => {
+    if (!currentSpaceId) return;
+    const archive = useChatArchiveStore.getState();
+    const archived = archive.archivedIds(currentSpaceId);
+
+    if (isPrimaryWindowConfigured()) {
+      if (archived.includes(0)) archive.unarchiveWindow(currentSpaceId, 0);
+      setChatOpen(true);
+      return;
+    }
+
+    if (archive.isSignificant(currentSpaceId, 0)) {
+      archive.unarchiveWindow(currentSpaceId, 0);
+    }
+
+    const configuredArchived = archived.filter(
+      (id) => id > 0 && isArchivedWindowConfigured(id)
+    );
+    if (configuredArchived.length === 0) return;
+
+    const layouts = useChatWindowStore.getState().layouts;
+    let anchor = layouts[0] || defaultChatLayout;
+    const toOpen = [];
+    for (const id of configuredArchived) {
+      archive.unarchiveWindow(currentSpaceId, id);
+      if (chatWindows.includes(id)) continue;
+      const layout = cascadeWindowLayout(anchor);
+      useChatWindowStore.getState().setLayout(id, layout);
+      anchor = layout;
+      toOpen.push(id);
+    }
+    if (toOpen.length > 0) {
+      setChatWindows((prev) => [...prev, ...toOpen.filter((id) => !prev.includes(id))]);
+    }
   }, [currentSpaceId, chatWindows, cascadeWindowLayout]);
 
   // The space-chat icon opens/closes ALL chat windows as one unit: the primary
@@ -2977,7 +3031,7 @@ const UIOverlay = ({
 
       <PendingChangesPanel />
       <WorkflowModal />
-      <PlanModal />
+      <PlanModal onEnsureWorkers={handleEnsurePlanWorkers} />
     </>
   );
 };

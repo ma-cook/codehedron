@@ -6,6 +6,7 @@ import { getContentStoreWorker, getContentStoreWorkerHealth } from '../../worker
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
 import usePlanStore from '../../stores/planStore';
+import usePlanRunStore from '../../stores/planRunStore';
 import useAuthStore from '../../stores/authStore';
 import { createPlanApi, addTaskApi, completeTaskApi } from '../planApiService';
 import { getNodeInfo, getDependencies, findPath, searchNodes, getCommunityInfo, getCommunityNodes, searchCommunities, getLspDefinition, getLspReferences, getLspTypeInfo, getLspCallGraph, getLspOverview } from './graphQuery';
@@ -1785,6 +1786,15 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       if (!title) return { success: false, content: 'create_plan requires a "title" parameter' };
       try {
         const planState = usePlanStore.getState();
+        const hasActiveTask = (planState.tasks || []).some(
+          (task) => task.status === 'working_on' || task.status === 'to_review'
+        );
+        if (planState.plan && hasActiveTask) {
+          return {
+            success: false,
+            content: 'This plan has a task in progress or awaiting review. Finish or reject it before creating a new plan.',
+          };
+        }
         const planData = await createPlanApi(planState.spaceId, title);
         const plan = { id: planData.id, spaceId: planData.space_id, title: planData.title, createdAt: planData.created_at };
         usePlanStore.getState()._setPlan(plan);
@@ -1820,6 +1830,15 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       try {
         const planState = usePlanStore.getState();
         if (!planState.plan) return { success: false, content: 'No active plan.' };
+        const run = usePlanRunStore.getState();
+        const runActive = ['running', 'waiting_for_review', 'waiting_for_push', 'stopping']
+          .includes(run.status);
+        if (runActive && run.spaceId === planState.plan.spaceId) {
+          return {
+            success: false,
+            content: 'Plan runs manage task completion automatically after ticket acceptance and PR merge.',
+          };
+        }
         const task = planState.tasks.find((t) => t.id === taskRef || t.text.includes(taskRef));
         if (!task) return { success: false, content: `No matching task found for "${taskRef}". Use get_plan to see available tasks.` };
         await completeTaskApi(planState.plan.id, task.id);

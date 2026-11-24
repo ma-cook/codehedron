@@ -43,6 +43,7 @@ import { saveDiagramDigest } from '../services/graphPersistence';
 import { createTicket, updateTicket, emitTicketCreated, emitTicketUpdated } from '../services/workflowService';
 import { buildWorkflowContext } from '../services/workflowCoordination';
 import { resolvePlanRunRequest } from '../services/planExecution';
+import { registerPlanWorker, unregisterPlanWorker } from '../services/planWorkerRegistry';
 import usePlanStore from '../stores/planStore';
 import {
   isEncryptedSecret,
@@ -324,6 +325,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const streamingRef = useRef('');
   const streamingMsgKeyRef = useRef(0);
   const abortControllerRef = useRef(null);
+  const sendCodeTextRef = useRef(null);
+  const workerLlmRef = useRef(null);
+  const workerOpenRef = useRef(isOpen);
+  const workerStreamingRef = useRef(false);
   const rafPendingRef = useRef(false);
   const correctionsRef = useRef([]);
   const handledLaunchRequestRef = useRef(null);
@@ -374,6 +379,9 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const llmSetReasoningEffort = useLlmStore(s => s.setReasoningEffort);
 
   const [windowLlm, setWindowLlm] = useState(() => loadWindowLlm(windowId));
+  workerLlmRef.current = windowLlm;
+  workerOpenRef.current = isOpen;
+  workerStreamingRef.current = streaming;
 
   // Mark this window as "significant" so that, if it's closed, UIOverlay will
   // archive it and surface a numbered icon below the top bar to reopen it.
@@ -805,25 +813,40 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
     }
   }, [input, streaming, planMessages, spaceId, user, windowLlm, selectedRepo, selectedBranch, onDiagramGenerated, markSignificant, handleClarify]);
 
-  const handleCodeSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || streaming) return;
+  const sendCodeText = useCallback(async (rawText, options = {}) => {
+    const text = String(rawText || '').trim();
+    if (!text || streaming) {
+      return {
+        ok: false,
+        error: streaming ? 'This chat is already running a task' : 'No request text',
+      };
+    }
 
-    const planRun = resolvePlanRunRequest(text, usePlanStore.getState());
+    if (options.switchMode) {
+      setChatMode('code');
+      persistMode(spaceId, 'code', windowId);
+    }
+
+    const planRun = options.planTask
+      ? { task: options.planTask, prompt: options.prompt || text }
+      : resolvePlanRunRequest(text, usePlanStore.getState());
     if (planRun?.error) {
       setLlmError(planRun.error);
-      return;
+      return { ok: false, error: planRun.error };
     }
-    const userRequest = planRun?.prompt || text;
+    const userRequest = options.prompt || planRun?.prompt || text;
 
     setLlmError(null);
-    setInput('');
+    if (options.clearInput !== false) setInput('');
     isNearBottomRef.current = true;
 
-    const userMessage = { role: 'user', content: text };
+    const userMessage = { role: 'user', content: options.userMessageText || text };
     const updatedMessages = [...codeMessages, userMessage];
     setCodeMessages(updatedMessages);
     markSignificant();
+    let workflowTicket = options.workflowTicket || null;
+    let generatedChanges = [];
+    let generatedBlocks = 0;
 
     const sceneObjects = useObjectsStore.getState().objects;
 
@@ -837,20 +860,21 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       { key: currentStreamKey, role: 'assistant', content: 'Starting…', streaming: true },
     ]);
 
-    // Create a workflow ticket for this LLM task
-    let workflowTicket = null;
-    try {
-      workflowTicket = await createTicket({
-        spaceId,
-        userId: user?.uid || user?.sub,
-        userName: user?.name || 'Anonymous',
-        userPicture: user?.picture || null,
-        promptPreview: (planRun?.task?.text || text).slice(0, 120),
-        promptFull: userRequest,
-      });
-      emitTicketCreated(workflowTicket);
-    } catch (ticketErr) {
-      console.warn('[CodeSend] Failed to create workflow ticket:', ticketErr.message);
+    if (!workflowTicket) {
+      try {
+        workflowTicket = await createTicket({
+          spaceId,
+          userId: user?.uid || user?.sub,
+          userName: user?.name || 'Anonymous',
+          userPicture: user?.picture || null,
+          promptPreview: (planRun?.task?.text || text).slice(0, 120),
+          promptFull: userRequest,
+          planTaskId: options.planTask?.id || null,
+        });
+        emitTicketCreated(workflowTicket);
+      } catch (ticketErr) {
+        console.warn('[CodeSend] Failed to create workflow ticket:', ticketErr.message);
+      }
     }
 
     const abortController = new AbortController();
@@ -1115,7 +1139,11 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               request: text,
             };
           });
-        csState.addPendingChanges(newChanges);
+        generatedChanges = newChanges;
+        generatedBlocks = mergedBlocks.length;
+        if (!options.skipPendingChanges) {
+          csState.addPendingChanges(newChanges);
+        }
 
         // Update workflow ticket with completed status and file diffs
         if (workflowTicket) {
@@ -1131,6 +1159,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               filesTouched: newChanges.map((c) => c.filePath),
               diffs: ticketDiffs,
             });
+            workflowTicket = updated;
             emitTicketUpdated(updated);
           } catch (ticketErr) {
             console.warn('[CodeSend] Failed to update workflow ticket:', ticketErr.message);
@@ -1193,17 +1222,27 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           }];
         });
         // No file changes — mark ticket as committed (nothing to review)
-        if (workflowTicket) {
+        if (workflowTicket && !options.skipEmptyTicketCommit) {
           try {
             const updated = await updateTicket(workflowTicket.id, { status: 'committed' });
+            workflowTicket = updated;
             emitTicketUpdated(updated);
           } catch (ticketErr) {
             console.warn('[CodeSend] Failed to update workflow ticket:', ticketErr.message);
           }
         }
       }
+
+      return {
+        ok: true,
+        hasCode: generatedBlocks > 0,
+        newChanges: generatedChanges,
+        ticket: workflowTicket,
+      };
     } catch (err) {
-      if (err.name === 'AbortError') return;
+      if (err.name === 'AbortError') {
+        return { ok: false, aborted: true, ticket: workflowTicket };
+      }
       const msg = err.message || 'Failed to reach LLM. Check your connection.';
       if (isFreeUsageLimit(err)) {
         setLlmError('Free usage limit reached for Opencode Zen. This free tier is shared per-IP across hoverchart, so its daily budget is often exhausted. Switch to a paid provider in the model picker (Anthropic, Google, or Nvidia) for reliable use.');
@@ -1214,6 +1253,7 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         setAuthError(msg);
       }
       setCodeMessages((prev) => prev.filter(m => m.key !== currentStreamKey));
+      return { ok: false, error: msg, ticket: workflowTicket };
     } finally {
       setStreaming(false);
       streamingRef.current = '';
@@ -1222,7 +1262,47 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       // if the run exited early (abort, error) before its own endRun().
       useLlmEditActivityStore.getState().endRun();
     }
-  }, [input, streaming, codeMessages, spaceId, user, selectedRepo, selectedBranch, techStack, windowLlm, markSignificant, handleClarify]);
+  }, [streaming, codeMessages, spaceId, windowId, user, selectedRepo, selectedBranch, techStack, windowLlm, markSignificant, handleClarify]);
+
+  const handleCodeSend = useCallback(async () => {
+    if (!input.trim() || streaming) return;
+    await sendCodeText(input);
+  }, [input, streaming, sendCodeText]);
+
+  sendCodeTextRef.current = sendCodeText;
+
+  useEffect(() => {
+    if (!spaceId) return undefined;
+    const worker = {
+      spaceId,
+      windowId,
+      get configured() {
+        const llm = workerLlmRef.current;
+        return !!(workerOpenRef.current && llm?.providerId && llm?.apiKey && llm?.selectedModel);
+      },
+      get busy() {
+        return workerStreamingRef.current;
+      },
+      sendTask: (payload) => {
+        if (!sendCodeTextRef.current) {
+          return Promise.resolve({ ok: false, error: 'Chat is not ready' });
+        }
+        return sendCodeTextRef.current(payload.prompt, {
+          workflowTicket: payload.ticket,
+          planTask: payload.task,
+          prompt: payload.prompt,
+          userMessageText: payload.task?.text,
+          skipPendingChanges: true,
+          skipEmptyTicketCommit: true,
+          switchMode: true,
+          clearInput: false,
+        });
+      },
+      stop: () => abortControllerRef.current?.abort(),
+    };
+    registerPlanWorker(worker);
+    return () => unregisterPlanWorker(spaceId, windowId);
+  }, [spaceId, windowId]);
 
   const handleKeyDown = useCallback(
     (e) => {

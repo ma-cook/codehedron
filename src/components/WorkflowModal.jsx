@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import useWorkflowStore from '../stores/workflowStore';
 import useSpaceManagerStore from '../stores/spaceManagerStore';
+import usePlanStore from '../stores/planStore';
 import { getTickets, subscribeToTickets } from '../services/workflowService';
 import WorkflowTicketRow from './WorkflowTicketRow';
 import './WorkflowModal.css';
@@ -11,6 +12,7 @@ const TABS = [
   { key: 'to_review', label: 'To Review' },
   { key: 'committed', label: 'Committed' },
   { key: 'merged', label: 'Merged' },
+  { key: 'rejected', label: 'Rejected' },
 ];
 
 export default function WorkflowModal() {
@@ -23,6 +25,7 @@ export default function WorkflowModal() {
   const isLoading = useWorkflowStore((s) => s.isLoading);
   const setIsLoading = useWorkflowStore((s) => s.setIsLoading);
   const spaceId = useSpaceManagerStore((s) => s.currentSpaceId);
+  const refreshPlan = usePlanStore((s) => s.refreshPlan);
 
   const [activeTab, setActiveTab] = useState(null);
 
@@ -45,14 +48,19 @@ export default function WorkflowModal() {
 
   useEffect(() => {
     if (!spaceId) return;
+    const applyTicket = (ticket) => {
+      if (!ticket) return;
+      updateTicket(ticket);
+      if (ticket.planTaskId) refreshPlan();
+    };
     const unsub = subscribeToTickets(spaceId, {
       onCreated: addTicket,
-      onUpdated: updateTicket,
-      onAccepted: (data) => updateTicket(data.ticket),
-      onRejected: (data) => updateTicket(data.ticket),
+      onUpdated: applyTicket,
+      onAccepted: (data) => applyTicket(data.ticket),
+      onRejected: (data) => applyTicket(data.ticket),
     });
     return unsub;
-  }, [spaceId, addTicket, updateTicket]);
+  }, [spaceId, addTicket, updateTicket, refreshPlan]);
 
   const handleClose = useCallback(() => setModalOpen(false), [setModalOpen]);
 

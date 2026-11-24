@@ -21,17 +21,19 @@ export function OrderHeader(props) {
     }
   }, [viewport.width, viewport.height]);
 
-  // Define wireframe letters for "VOLSCAPE"
-  const letterSpacing = 12;
+  // Define wireframe letters for "CODEHEDRON"
+  const letterSpacing = 10;
   const letterHeight = 10;
   const strokeWidth = 1;
 
-  // Letter V
-  const letterV = [
+  // Letter C
+  const letterC = [
+    [6, letterHeight, 0],
     [0, letterHeight, 0],
-    [4, 0, 0],
-    [4, 0, 0],
-    [8, letterHeight, 0],
+    [0, letterHeight, 0],
+    [0, 0, 0],
+    [0, 0, 0],
+    [6, 0, 0],
   ];
 
   // Letter O
@@ -46,60 +48,20 @@ export function OrderHeader(props) {
     [0, 0, 0],
   ];
 
-  // Letter L
-  const letterL = [
-    [0, letterHeight, 0],
-    [0, 0, 0],
-    [0, 0, 0],
-    [5, 0, 0],
-  ];
-
-  // Letter S
-  const letterS = [
-    [5, letterHeight, 0],
-    [0, letterHeight, 0],
-    [0, letterHeight, 0],
-    [0, letterHeight / 2, 0],
-    [0, letterHeight / 2, 0],
-    [5, letterHeight / 2, 0],
-    [5, letterHeight / 2, 0],
-    [5, 0, 0],
-    [5, 0, 0],
-    [0, 0, 0],
-  ];
-
-  // Letter C
-  const letterC = [
-    [6, letterHeight, 0],
-    [0, letterHeight, 0],
-    [0, letterHeight, 0],
-    [0, 0, 0],
-    [0, 0, 0],
-    [6, 0, 0],
-  ];
-
-  // Letter A
-  const letterA = [
+  // Letter D
+  const letterD = [
     [0, 0, 0],
     [0, letterHeight, 0],
     [0, letterHeight, 0],
-    [6, letterHeight, 0],
-    [6, letterHeight, 0],
-    [6, 0, 0],
-    [0, letterHeight / 2, 0],
-    [6, letterHeight / 2, 0],
-  ];
-
-  // Letter P
-  const letterP = [
+    [4, letterHeight, 0],
+    [4, letterHeight, 0],
+    [6, letterHeight - 2, 0],
+    [6, letterHeight - 2, 0],
+    [6, 2, 0],
+    [6, 2, 0],
+    [4, 0, 0],
+    [4, 0, 0],
     [0, 0, 0],
-    [0, letterHeight, 0],
-    [0, letterHeight, 0],
-    [5, letterHeight, 0],
-    [5, letterHeight, 0],
-    [5, letterHeight / 2, 0],
-    [5, letterHeight / 2, 0],
-    [0, letterHeight / 2, 0],
   ];
 
   // Letter E
@@ -114,44 +76,92 @@ export function OrderHeader(props) {
     [5, 0, 0],
   ];
 
+  // Letter H
+  const letterH = [
+    [0, 0, 0],
+    [0, letterHeight, 0],
+    [6, 0, 0],
+    [6, letterHeight, 0],
+    [0, letterHeight / 2, 0],
+    [6, letterHeight / 2, 0],
+  ];
+
+  // Letter R
+  const letterR = [
+    [0, 0, 0],
+    [0, letterHeight, 0],
+    [0, letterHeight, 0],
+    [4, letterHeight, 0],
+    [4, letterHeight, 0],
+    [5, letterHeight - 1, 0],
+    [5, letterHeight - 1, 0],
+    [5, letterHeight / 2 + 1, 0],
+    [5, letterHeight / 2 + 1, 0],
+    [4, letterHeight / 2, 0],
+    [4, letterHeight / 2, 0],
+    [0, letterHeight / 2, 0],
+    [3, letterHeight / 2, 0],
+    [6, 0, 0],
+  ];
+
+  // Letter N
+  const letterN = [
+    [0, 0, 0],
+    [0, letterHeight, 0],
+    [0, letterHeight, 0],
+    [6, 0, 0],
+    [6, 0, 0],
+    [6, letterHeight, 0],
+  ];
+
   return (
     <group ref={groupRef} {...props}>
-      {/* V */}
-      <Line points={letterV} color="#333333" lineWidth={strokeWidth} />
+      {/* C */}
+      <Line points={letterC} color="#333333" lineWidth={strokeWidth} />
 
       {/* O */}
       <group position={[letterSpacing * 1, 0, 0]}>
         <Line points={letterO} color="#333333" lineWidth={strokeWidth} />
       </group>
 
-      {/* L */}
+      {/* D */}
       <group position={[letterSpacing * 2, 0, 0]}>
-        <Line points={letterL} color="#333333" lineWidth={strokeWidth} />
-      </group>
-
-      {/* S */}
-      <group position={[letterSpacing * 3, 0, 0]}>
-        <Line points={letterS} color="#333333" lineWidth={strokeWidth} />
-      </group>
-
-      {/* C */}
-      <group position={[letterSpacing * 4, 0, 0]}>
-        <Line points={letterC} color="#333333" lineWidth={strokeWidth} />
-      </group>
-
-      {/* A */}
-      <group position={[letterSpacing * 5, 0, 0]}>
-        <Line points={letterA} color="#333333" lineWidth={strokeWidth} />
-      </group>
-
-      {/* P */}
-      <group position={[letterSpacing * 6, 0, 0]}>
-        <Line points={letterP} color="#333333" lineWidth={strokeWidth} />
+        <Line points={letterD} color="#333333" lineWidth={strokeWidth} />
       </group>
 
       {/* E */}
-      <group position={[letterSpacing * 7, 0, 0]}>
+      <group position={[letterSpacing * 3, 0, 0]}>
         <Line points={letterE} color="#333333" lineWidth={strokeWidth} />
+      </group>
+
+      {/* H */}
+      <group position={[letterSpacing * 4, 0, 0]}>
+        <Line points={letterH} color="#333333" lineWidth={strokeWidth} />
+      </group>
+
+      {/* E */}
+      <group position={[letterSpacing * 5, 0, 0]}>
+        <Line points={letterE} color="#333333" lineWidth={strokeWidth} />
+      </group>
+
+      {/* D */}
+      <group position={[letterSpacing * 6, 0, 0]}>
+        <Line points={letterD} color="#333333" lineWidth={strokeWidth} />
+      </group>
+
+      {/* R */}
+      <group position={[letterSpacing * 7, 0, 0]}>
+        <Line points={letterR} color="#333333" lineWidth={strokeWidth} />
+      </group>
+
+      {/* O */}
+      <group position={[letterSpacing * 8, 0, 0]}>
+        <Line points={letterO} color="#333333" lineWidth={strokeWidth} />
+      </group>
+
+      {/* N */}
+      <group position={[letterSpacing * 9, 0, 0]}>
+        <Line points={letterN} color="#333333" lineWidth={strokeWidth} />
       </group>
     </group>
   );

@@ -109,6 +109,17 @@ export async function getPullRequest(token, owner, repo, prNumber) {
   );
 }
 
+export async function closePullRequest(token, owner, repo, prNumber) {
+  return githubFetch(
+    token,
+    `/repos/${enc(owner)}/${enc(repo)}/pulls/${prNumber}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ state: 'closed' }),
+    }
+  );
+}
+
 export async function getRepoInfo(token, owner, repo) {
   return githubFetch(token, `/repos/${enc(owner)}/${enc(repo)}`);
 }

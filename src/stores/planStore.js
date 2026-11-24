@@ -34,8 +34,13 @@ import {
  *   userName: string,
  *   userPicture: string | null,
  *   text: string,
- *   status: 'todo' | 'completed',
+ *   status: 'todo' | 'working_on' | 'to_review' | 'completed',
  *   sortOrder: number,
+ *   dependsOn: string[],
+ *   claimedBy: string | null,
+ *   claimedAt: string | null,
+ *   ticketId: string | null,
+ *   lastError: string | null,
  *   createdAt: string,
  *   completedAt: string | null,
  * }
@@ -101,6 +106,31 @@ const usePlanStore = create((set, get) => ({
     });
 
     set({ _unsub: unsub });
+  },
+
+  refreshPlan: async () => {
+    const { spaceId } = get();
+    if (!spaceId) return null;
+    try {
+      const planData = await getPlan(spaceId);
+      if (!planData) {
+        set({ plan: null, tasks: [] });
+        return null;
+      }
+      set({
+        plan: {
+          id: planData.id,
+          spaceId: planData.space_id,
+          title: planData.title,
+          createdAt: planData.created_at,
+        },
+        tasks: (planData.tasks || []).map(normalizeTask),
+      });
+      return planData;
+    } catch (err) {
+      console.warn('[PlanStore] Failed to refresh plan:', err.message);
+      return null;
+    }
   },
 
   createPlan: async (title) => {
@@ -196,10 +226,19 @@ const usePlanStore = create((set, get) => ({
     return get().tasks.filter((t) => t.status === 'completed');
   },
 
+  getActiveTasks: () => {
+    return get().tasks.filter((t) => t.status === 'working_on' || t.status === 'to_review');
+  },
+
   getTaskCount: () => {
     const { tasks } = get();
-    const todo = tasks.filter((t) => t.status === 'todo').length;
-    return { total: tasks.length, todo, completed: tasks.length - todo };
+    return {
+      total: tasks.length,
+      todo: tasks.filter((t) => t.status === 'todo').length,
+      workingOn: tasks.filter((t) => t.status === 'working_on').length,
+      toReview: tasks.filter((t) => t.status === 'to_review').length,
+      completed: tasks.filter((t) => t.status === 'completed').length,
+    };
   },
 
   // Called by toolExecutor — synchronous local update for immediate UI feedback
@@ -207,6 +246,16 @@ const usePlanStore = create((set, get) => ({
   _addTaskLocal: (task) => {
     set((state) => ({
       tasks: [...state.tasks, normalizeTask(task)],
+    }));
+  },
+
+  _applyTaskUpdate: (row) => {
+    if (!row?.id) return;
+    const task = normalizeTask(row);
+    set((state) => ({
+      tasks: state.tasks.some((t) => t.id === task.id)
+        ? state.tasks.map((t) => (t.id === task.id ? task : t))
+        : [...state.tasks, task],
     }));
   },
 
@@ -228,6 +277,11 @@ function normalizeTask(row) {
     text: row.text,
     status: row.status,
     sortOrder: row.sort_order,
+    dependsOn: row.depends_on || [],
+    claimedBy: row.claimed_by || null,
+    claimedAt: row.claimed_at || null,
+    ticketId: row.ticket_id || null,
+    lastError: row.last_error || null,
     createdAt: row.created_at,
     completedAt: row.completed_at,
   };

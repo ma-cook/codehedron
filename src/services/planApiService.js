@@ -55,6 +55,26 @@ export async function removeTaskApi(planId, taskId) {
   return taskId;
 }
 
+export async function claimNextTaskApi(planId, { retryTaskId } = {}) {
+  return api.post(`/api/plans/${planId}/claim-next`, { retryTaskId: retryTaskId || null });
+}
+
+export async function heartbeatTaskApi(planId, taskId, claimToken) {
+  return api.post(`/api/plans/${planId}/tasks/${taskId}/heartbeat`, { claimToken });
+}
+
+export async function finishTaskApi(planId, taskId, { claimToken, ticketId }) {
+  return api.post(`/api/plans/${planId}/tasks/${taskId}/finish`, { claimToken, ticketId });
+}
+
+export async function releaseTaskApi(planId, taskId, { claimToken, error }) {
+  return api.post(`/api/plans/${planId}/tasks/${taskId}/release`, { claimToken, error });
+}
+
+export async function setTaskErrorApi(planId, taskId, lastError) {
+  return api.patch(`/api/plans/${planId}/tasks/${taskId}`, { lastError });
+}
+
 // ── Socket subscription ───────────────────────────────────────────────
 
 export function subscribeToPlan(spaceId, callbacks) {

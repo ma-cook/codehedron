@@ -325,6 +325,83 @@
   padding: 8px 0;
 }
 
+.workflow-ticket-plan-badge {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 8px;
+  color: #b9a6ff;
+  background: rgba(150, 120, 255, 0.14);
+}
+
+.workflow-ticket-pr-link {
+  font-size: 10px;
+  font-weight: 500;
+  color: #8db4ff;
+  text-decoration: none;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(120, 160, 255, 0.1);
+  white-space: nowrap;
+}
+.workflow-ticket-pr-link:hover {
+  background: rgba(120, 160, 255, 0.2);
+}
+
+.workflow-ticket-action-error {
+  margin: 0 10px 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: #f49b8d;
+  background: rgba(244, 120, 100, 0.1);
+  border: 1px solid rgba(244, 120, 100, 0.25);
+  word-break: break-word;
+}
+
+.workflow-ticket-pr-info {
+  margin-top: 8px;
+}
+
+.workflow-ticket-pr-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: rgba(255, 255, 255, 0.6);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.workflow-ticket-pr-arrow {
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.workflow-ticket-pr-state {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 9px;
+  text-transform: uppercase;
+  color: #7adc7e;
+}
+
+.workflow-ticket-pr-expanded-link {
+  display: inline-block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: #8db4ff;
+  text-decoration: none;
+}
+.workflow-ticket-pr-expanded-link:hover {
+  text-decoration: underline;
+}
+
 /* ── Scrollbar ──────────────────────────────────────────────────── */
 
 .workflow-panel-body::-webkit-scrollbar {

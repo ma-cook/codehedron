@@ -41,7 +41,7 @@
 }
 
 .plan-panel-close {
-  margin-left: auto;
+  margin-left: 6px;
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.5);
@@ -54,6 +54,66 @@
 .plan-panel-close:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
+}
+
+.plan-panel-run-actions {
+  margin-left: auto;
+}
+
+.plan-panel-run-button {
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms, color 120ms;
+}
+
+.plan-panel-play {
+  background: rgba(122, 220, 126, 0.15);
+  border: 1px solid rgba(122, 220, 126, 0.45);
+  color: #9be89e;
+}
+.plan-panel-play:hover:not(:disabled) {
+  background: rgba(122, 220, 126, 0.25);
+}
+.plan-panel-play:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.plan-panel-stop {
+  background: rgba(244, 120, 100, 0.12);
+  border: 1px solid rgba(244, 120, 100, 0.4);
+  color: #f49b8d;
+}
+.plan-panel-stop:hover:not(:disabled) {
+  background: rgba(244, 120, 100, 0.22);
+}
+.plan-panel-stop:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.plan-panel-run-status {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: #cfe0ff;
+  background: rgba(120, 160, 255, 0.08);
+  border-bottom: 1px solid rgba(120, 160, 255, 0.12);
+  flex-shrink: 0;
+}
+.plan-panel-run-status.error {
+  color: #f49b8d;
+  background: rgba(244, 120, 100, 0.08);
+  border-bottom-color: rgba(244, 120, 100, 0.16);
+}
+.plan-panel-merge-error {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #f49b8d;
+  word-break: break-word;
 }
 
 /* Plan title */
@@ -144,6 +204,10 @@
   background: rgba(255, 255, 255, 0.04);
   border-color: rgba(255, 255, 255, 0.1);
 }
+.plan-task-row.active {
+  border-color: rgba(120, 160, 255, 0.25);
+  background: rgba(120, 160, 255, 0.05);
+}
 
 .plan-task-checkbox {
   flex-shrink: 0;
@@ -170,6 +234,12 @@
   background: rgba(122, 220, 126, 0.2);
   border-color: rgba(122, 220, 126, 0.5);
   color: #7adc7e;
+}
+.plan-task-checkbox.busy {
+  border-color: rgba(120, 160, 255, 0.55);
+  color: #8db4ff;
+  cursor: default;
+  font-size: 8px;
 }
 
 .plan-task-content {
@@ -220,6 +290,31 @@
 .plan-task-user {
   font-size: 10px;
   color: rgba(255, 255, 255, 0.35);
+}
+
+.plan-task-status {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 8px;
+}
+.plan-task-status.working_on {
+  color: #f3a85c;
+  background: rgba(243, 168, 92, 0.14);
+}
+.plan-task-status.to_review {
+  color: #8db4ff;
+  background: rgba(120, 160, 255, 0.14);
+}
+
+.plan-task-error {
+  margin-top: 4px;
+  font-size: 10px;
+  color: #f49b8d;
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .plan-task-delete {

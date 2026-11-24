@@ -28,6 +28,13 @@ export function serializeTicket(row) {
     status: row.status,
     filesTouched: row.files_touched || [],
     diffs: row.diffs || [],
+    planTaskId: row.plan_task_id || null,
+    githubBranch: row.github_branch || null,
+    githubBaseBranch: row.github_base_branch || null,
+    githubPrNumber: row.github_pr_number || null,
+    githubPrUrl: row.github_pr_url || null,
+    githubMergeCommitSha: row.github_merge_commit_sha || null,
+    githubPrState: row.github_pr_state || null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     committedAt: row.committed_at,
@@ -101,12 +108,30 @@ router.post('/', async (req, res) => {
   const userId = req.user.sub;
   const userName = req.user.name || req.user.email || 'Anonymous';
   const userPicture = req.user.picture || null;
+  const planTaskId = typeof req.body?.planTaskId === 'string' ? req.body.planTaskId : null;
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    if (planTaskId) {
+      const claim = await client.query(
+        `SELECT id FROM plan_tasks
+         WHERE id = $1 AND space_id = $2 AND status = 'working_on' AND claimed_by = $3
+         FOR UPDATE`,
+        [planTaskId, req.body.spaceId, userId]
+      );
+      if (claim.rows.length === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Plan task is not claimed by this user' });
+      }
+    }
+
+    const result = await client.query(
       `INSERT INTO workflow_tickets
-         (space_id, user_id, user_name, user_picture, prompt_preview, prompt_full, files_touched, diffs)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb)
+         (space_id, user_id, user_name, user_picture, prompt_preview, prompt_full,
+          files_touched, diffs, plan_task_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9)
        RETURNING *`,
       [
         req.body.spaceId,
@@ -117,25 +142,73 @@ router.post('/', async (req, res) => {
         promptFull,
         JSON.stringify(filesTouched),
         JSON.stringify(diffs),
+        planTaskId,
       ]
     );
+
+    if (planTaskId) {
+      await client.query(
+        `UPDATE plan_tasks SET ticket_id = $1 WHERE id = $2`,
+        [result.rows[0].id, planTaskId]
+      );
+    }
+
+    await client.query('COMMIT');
     res.status(201).json(serializeTicket(result.rows[0]));
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Create workflow ticket error:', err);
     res.status(500).json({ error: 'Failed to create workflow ticket' });
+  } finally {
+    client.release();
   }
 });
 
 ticketItemRouter.patch('/', async (req, res) => {
-  const { status, filesTouched, diffs } = req.body || {};
+  const {
+    status,
+    filesTouched,
+    diffs,
+    githubBranch,
+    githubBaseBranch,
+    githubPrNumber,
+    githubPrUrl,
+    githubPrState,
+    githubMergeCommitSha,
+  } = req.body || {};
+
   if (status !== undefined && !VALID_STATUSES.has(status)) {
     return res.status(400).json({ error: 'Invalid workflow ticket status' });
+  }
+  if (status === 'merged' && req.ticket.plan_task_id) {
+    return res.status(400).json({ error: 'Use the merged endpoint for plan-linked tickets' });
+  }
+  if (
+    status === 'to_review'
+    && req.ticket.plan_task_id
+    && !['in_progress', 'to_review'].includes(req.ticket.status)
+  ) {
+    return res.status(409).json({ error: 'Plan ticket can no longer be submitted for review' });
   }
   if (filesTouched !== undefined && !Array.isArray(filesTouched)) {
     return res.status(400).json({ error: 'filesTouched must be an array' });
   }
   if (diffs !== undefined && !Array.isArray(diffs)) {
     return res.status(400).json({ error: 'diffs must be an array' });
+  }
+  if (githubPrNumber !== undefined && githubPrNumber !== null && !Number.isInteger(githubPrNumber)) {
+    return res.status(400).json({ error: 'githubPrNumber must be an integer or null' });
+  }
+  for (const [name, value] of Object.entries({
+    githubBranch,
+    githubBaseBranch,
+    githubPrUrl,
+    githubPrState,
+    githubMergeCommitSha,
+  })) {
+    if (value !== undefined && value !== null && typeof value !== 'string') {
+      return res.status(400).json({ error: `${name} must be a string or null` });
+    }
   }
 
   const filesJson = filesTouched === undefined
@@ -151,15 +224,33 @@ ticketItemRouter.patch('/', async (req, res) => {
        SET status = COALESCE($1, status),
            files_touched = COALESCE($2::jsonb, files_touched),
            diffs = COALESCE($3::jsonb, diffs),
+           github_branch = COALESCE($4, github_branch),
+           github_base_branch = COALESCE($5, github_base_branch),
+           github_pr_number = COALESCE($6, github_pr_number),
+           github_pr_url = COALESCE($7, github_pr_url),
+           github_pr_state = COALESCE($8, github_pr_state),
+           github_merge_commit_sha = COALESCE($9, github_merge_commit_sha),
            committed_at = CASE
              WHEN $1 = 'committed' THEN COALESCE(committed_at, NOW())
              WHEN $1 IN ('in_progress', 'to_review', 'rejected') THEN NULL
              ELSE committed_at
            END,
            updated_at = NOW()
-       WHERE id = $4 AND space_id = $5
+       WHERE id = $10 AND space_id = $11
        RETURNING *`,
-      [status ?? null, filesJson, diffsJson, req.ticket.id, req.ticket.space_id]
+      [
+        status ?? null,
+        filesJson,
+        diffsJson,
+        githubBranch ?? null,
+        githubBaseBranch ?? null,
+        githubPrNumber ?? null,
+        githubPrUrl ?? null,
+        githubPrState ?? null,
+        githubMergeCommitSha ?? null,
+        req.ticket.id,
+        req.ticket.space_id,
+      ]
     );
     if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Workflow ticket not found' });
@@ -176,12 +267,15 @@ ticketItemRouter.post('/accept', async (req, res) => {
     const result = await pool.query(
       `UPDATE workflow_tickets
        SET status = 'committed', committed_at = NOW(), updated_at = NOW()
-       WHERE id = $1 AND space_id = $2
+       WHERE id = $1 AND space_id = $2 AND status IN ('to_review', 'committed')
        RETURNING *`,
       [req.ticket.id, req.ticket.space_id]
     );
     if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'Workflow ticket not found' });
+      if (req.ticket.status === 'merged') {
+        return res.status(409).json({ error: 'Workflow ticket is already merged' });
+      }
+      return res.status(409).json({ error: 'Workflow ticket is not ready for acceptance' });
     }
     res.json(serializeTicket(result.rows[0]));
   } catch (err) {
@@ -191,20 +285,129 @@ ticketItemRouter.post('/accept', async (req, res) => {
 });
 
 ticketItemRouter.post('/reject', async (req, res) => {
+  const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+    ? req.body.reason.trim()
+    : 'Rejected by user';
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
+    await client.query('BEGIN');
+
+    const result = await client.query(
       `UPDATE workflow_tickets
        SET status = 'rejected', committed_at = NULL, updated_at = NOW()
-       WHERE id = $1 AND space_id = $2
+       WHERE id = $1 AND space_id = $2 AND status <> 'merged'
        RETURNING *`,
       [req.ticket.id, req.ticket.space_id]
     );
     if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
+      if (req.ticket.status === 'merged') {
+        return res.status(409).json({ error: 'A merged ticket cannot be rejected' });
+      }
       return res.status(404).json({ error: 'Workflow ticket not found' });
     }
-    res.json(serializeTicket(result.rows[0]));
+
+    let planTask = null;
+    if (result.rows[0].plan_task_id) {
+      const taskResult = await client.query(
+        `UPDATE plan_tasks
+         SET status = 'todo',
+             completed_at = NULL,
+             claimed_by = NULL,
+             claimed_at = NULL,
+             claim_token = NULL,
+             ticket_id = NULL,
+             last_error = $1
+         WHERE id = $2
+            AND space_id = $3
+            AND status IN ('working_on', 'to_review')
+            AND (ticket_id IS NULL OR ticket_id = $4)
+         RETURNING *`,
+        [reason, result.rows[0].plan_task_id, req.ticket.space_id, result.rows[0].id]
+      );
+      planTask = taskResult.rows[0] || null;
+    }
+
+    await client.query('COMMIT');
+    res.json({ ...serializeTicket(result.rows[0]), planTask });
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error('Reject workflow ticket error:', err);
     res.status(500).json({ error: 'Failed to reject workflow ticket' });
+  } finally {
+    client.release();
+  }
+});
+
+ticketItemRouter.post('/merged', async (req, res) => {
+  const mergeCommitSha = typeof req.body?.mergeCommitSha === 'string'
+    ? req.body.mergeCommitSha
+    : null;
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const locked = await client.query(
+      `SELECT * FROM workflow_tickets WHERE id = $1 AND space_id = $2 FOR UPDATE`,
+      [req.ticket.id, req.ticket.space_id]
+    );
+    if (locked.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Workflow ticket not found' });
+    }
+
+    const ticket = locked.rows[0];
+    if (ticket.status === 'rejected') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'A rejected ticket cannot be marked merged' });
+    }
+    if (ticket.status !== 'merged' && ticket.status !== 'committed') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Workflow ticket must be accepted before merge' });
+    }
+
+    const result = ticket.status === 'merged'
+      ? { rows: [ticket] }
+      : await client.query(
+        `UPDATE workflow_tickets
+         SET status = 'merged',
+             github_merge_commit_sha = COALESCE($1, github_merge_commit_sha),
+             github_pr_state = 'merged',
+             updated_at = NOW()
+         WHERE id = $2 AND space_id = $3
+         RETURNING *`,
+        [mergeCommitSha, req.ticket.id, req.ticket.space_id]
+      );
+
+    let planTask = null;
+    if (result.rows[0].plan_task_id) {
+      const taskResult = await client.query(
+        `UPDATE plan_tasks
+         SET status = 'completed',
+             completed_at = NOW(),
+             claimed_by = NULL,
+             claimed_at = NULL,
+             claim_token = NULL,
+             ticket_id = $1,
+             last_error = NULL
+         WHERE id = $2 AND space_id = $3
+           AND status IN ('working_on', 'to_review')
+           AND (ticket_id IS NULL OR ticket_id = $1)
+         RETURNING *`,
+        [result.rows[0].id, result.rows[0].plan_task_id, req.ticket.space_id]
+      );
+      planTask = taskResult.rows[0] || null;
+    }
+
+    await client.query('COMMIT');
+    res.json({ ...serializeTicket(result.rows[0]), planTask });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Merge workflow ticket error:', err);
+    res.status(500).json({ error: 'Failed to mark workflow ticket merged' });
+  } finally {
+    client.release();
   }
 });

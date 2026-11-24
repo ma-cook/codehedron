@@ -60,7 +60,7 @@ const Avatar = ({ user }) => {
 
 /**
  * Single top bar shared across the landing and space views.
- * - Left: menu button + VOLSCAPE brand (menu content stays per-view).
+ * - Left: menu button + CODEHEDRON brand (menu content stays per-view).
  * - Space only: action buttons (`actions` slot) and presence/coordinates
  *   (`presence` slot).
  * - Right (any logged-in user): organization name (first org, clickable to
@@ -192,8 +192,8 @@ const TopBar = ({
         >
           ☰
         </button>
-        <div className="top-bar-brand" aria-label="Volscape">
-          VOL<span className="brand-accent">SCAPE</span>
+        <div className="top-bar-brand" aria-label="CodeHedron">
+          CODE<span className="brand-accent">HEDRON</span>
         </div>
         {showFeaturesEntry && (
           <button

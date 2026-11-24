@@ -2,4 +2,4 @@ User-agent: *
 Allow: /
 Disallow: /cdn-cgi/
 
-Sitemap: https://volscape.com/sitemap.xml
+Sitemap: https://codehedron.dev/sitemap.xml

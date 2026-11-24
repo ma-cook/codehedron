@@ -1,0 +1,20 @@
+# CodeHedron
+
+> CodeHedron (https://codehedron.dev) is a browser-based 3D diagram tool where every object has true X, Y and Z positioning in a shared spatial WebGL scene — not a flat 2D isometric canvas. It renders 3D architecture diagrams, 3D mind maps and spatial data visualizations, scans GitHub repositories into navigable 3D code maps, and supports real-time multi-user collaboration with webcam and screen share in the scene.
+
+CodeHedron is a 3D diagram tool with true X, Y, Z positioning: nodes, planes and connections live at explicit 3D coordinates (Three.js/WebGL), the camera orbits and flies freely, and connections route through space between polyhedron faces (cubes, tetrahedrons, octahedrons, dodecahedrons). It is not a 2D isometric drawing tool.
+
+Key capabilities:
+- True 3D X/Y/Z positioning (not 2D isometric)
+- 3D architecture diagrams and 3D mind maps
+- GitHub repository scanning into 3D code maps (per-branch, rescan, background scans)
+- CSV upload to 3D data visualization
+- Real-time multi-user spaces with presence, webcam and screen share
+- Organizations, per-space sharing, try-without-account mode
+- Bring-your-own-key LLM integration (Anthropic, Google Gemini, NVIDIA, OpenCode)
+- Free to start, no install
+
+Links:
+- [Product](https://codehedron.dev)
+- [FAQ / Docs](https://codehedron.dev/docs)
+- [GitHub](https://github.com/ma-cook/codehedron)

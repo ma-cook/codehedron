@@ -14,7 +14,7 @@ const HERO_BULLETS = [
 const HERO_COLLAGE = [
   {
     src: '/assets/3dmerfolk.PNG',
-    alt: 'Volscape 3D architecture map',
+    alt: 'CodeHedron 3D architecture map',
   },
   {
     src: '/assets/3dmerfolk2.PNG',
@@ -26,7 +26,7 @@ const HERO_COLLAGE = [
   },
   {
     src: '/assets/3dmerfolk4.PNG',
-    alt: 'Volscape 3D scene showing code architecture',
+    alt: 'CodeHedron 3D scene showing code architecture',
   },
 ];
 
@@ -73,7 +73,7 @@ const FEATURES = [
   {
     icon: '⬡',
     title: 'See your codebase in 3D',
-    blurb: 'Volscape turns any repository into an interactive 3D map you can fly through.',
+    blurb: 'CodeHedron turns any repository into an interactive 3D map you can fly through.',
     bullets: [
       'Auto-scans public or private GitHub repositories',
       'Shape encodes meaning: dodecahedrons for components, cubes for functions, stores and hooks, tetrahedrons for services',
@@ -98,7 +98,7 @@ const FEATURES = [
   {
     icon: '◎',
     title: 'Scan a live website',
-    blurb: 'Point Volscape at a running site and watch its runtime behaviour become a diagram.',
+    blurb: 'Point CodeHedron at a running site and watch its runtime behaviour become a diagram.',
     bullets: [
       'Headless Chromium captures network calls, a CPU profile and console output',
       'Detects the frontend framework at runtime',
@@ -330,7 +330,7 @@ export const LandingPage = React.memo(({ view = 'home', onBack, onRegister, onTr
               <span className="landing-gradient-text">in 3D</span>
             </h1>
             <p className="hero-subhead">
-              Volscape turns any codebase into an interactive 3D map -
+              CodeHedron turns any codebase into an interactive 3D map -
               auto-scanned, version-controlled, and built for teams.
             </p>
             <ul className="hero-bullets">

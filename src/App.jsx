@@ -554,7 +554,7 @@ const existingIdsRef = useRef(new Set());
     publicSpaceReady,
     onBackToLanding,
   ]);
-  // Check for unauthorized access and redirect to volscape.com
+  // Check for unauthorized access and redirect to the landing page
   useEffect(() => {
     // If we have a currentSpaceId but no authentication and no public space access
     // BUT don't redirect if we're currently looking up a public space or in trial mode

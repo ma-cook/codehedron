@@ -22,7 +22,7 @@ import { api, onSocket, emitSocket } from '../api-client';
 
 // ── API calls ────────────────────────────────────────────────────────
 
-export async function createTicket({ spaceId, userId, userName, userPicture, promptPreview, promptFull }) {
+export async function createTicket({ spaceId, userId, userName, userPicture, promptPreview, promptFull, planTaskId }) {
   const ticket = await api.post('/api/workflow/tickets', {
     spaceId,
     userId,
@@ -30,6 +30,7 @@ export async function createTicket({ spaceId, userId, userName, userPicture, pro
     userPicture: userPicture || null,
     promptPreview: (promptPreview || '').slice(0, 120),
     promptFull,
+    planTaskId: planTaskId || null,
     status: 'in_progress',
     filesTouched: [],
     diffs: [],
@@ -52,8 +53,15 @@ export async function acceptTicket(ticketId) {
   return ticket;
 }
 
-export async function rejectTicket(ticketId) {
-  const ticket = await api.post(`/api/workflow/tickets/${ticketId}/reject`);
+export async function rejectTicket(ticketId, reason) {
+  const ticket = await api.post(`/api/workflow/tickets/${ticketId}/reject`, { reason });
+  return ticket;
+}
+
+export async function markTicketMerged(ticketId, mergeCommitSha) {
+  const ticket = await api.post(`/api/workflow/tickets/${ticketId}/merged`, {
+    mergeCommitSha: mergeCommitSha || null,
+  });
   return ticket;
 }
 

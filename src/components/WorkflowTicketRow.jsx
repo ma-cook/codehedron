@@ -1,7 +1,10 @@
 import { useState, useCallback, useMemo } from 'react';
 import useWorkflowStore from '../stores/workflowStore';
 import useAuthStore from '../stores/authStore';
+import useCodeStore from '../stores/codeStore';
+import usePlanStore from '../stores/planStore';
 import { acceptTicket, rejectTicket, emitTicketAccepted, emitTicketRejected } from '../services/workflowService';
+import { approveAndMergePlanPullRequest, closePlanPullRequest } from '../services/planPullRequestService';
 import WorkflowTicketDiff from './WorkflowTicketDiff';
 
 const STATUS_STYLES = {
@@ -26,27 +29,35 @@ function formatAge(isoString) {
 export default function WorkflowTicketRow({ ticket }) {
   const [expanded, setExpanded] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
+  const [actionError, setActionError] = useState(null);
   const updateTicket = useWorkflowStore((s) => s.updateTicket);
   const currentUserId = useAuthStore((s) => s.user?.uid || s.user?.sub);
+  const repoOwner = useCodeStore((s) => s.repoOwner);
+  const repoName = useCodeStore((s) => s.repoName);
+  const selectedRepo = useCodeStore((s) => s.selectedRepo);
 
   const status = STATUS_STYLES[ticket.status] || STATUS_STYLES.in_progress;
   const isOwn = ticket.userId === currentUserId;
-  const canAccept = ticket.status === 'to_review' && !isOwn;
-  const canReject = ticket.status === 'to_review' && !isOwn;
+  const isPlanTicket = !!ticket.planTaskId;
+  const canDecide = ticket.status === 'to_review' && (!isOwn || isPlanTicket);
+  const canAccept = canDecide;
+  const canReject = canDecide;
+  const canMerge = isPlanTicket && ticket.status === 'committed' && !!ticket.githubPrNumber;
   const files = useMemo(() => ticket.filesTouched || [], [ticket.filesTouched]);
   const diffs = useMemo(() => ticket.diffs || [], [ticket.diffs]);
+  const owner = repoOwner || selectedRepo?.owner?.login || null;
+  const repo = repoName || selectedRepo?.name || null;
 
   const handleAccept = useCallback(async (e) => {
     e.stopPropagation();
     setActionLoading(true);
+    setActionError(null);
     try {
       const updated = await acceptTicket(ticket.id);
       updateTicket(updated);
       emitTicketAccepted(ticket.id, currentUserId);
 
-      // Apply ticket diffs to the workspace's pending changes
-      if (diffs.length > 0) {
-        const { default: useCodeStore } = await import('../stores/codeStore');
+      if (!isPlanTicket && diffs.length > 0) {
         const csState = useCodeStore.getState();
         const pendingChanges = diffs.map((d) => ({
           filePath: d.filePath,
@@ -61,28 +72,66 @@ export default function WorkflowTicketRow({ ticket }) {
       }
     } catch (err) {
       console.warn('[WorkflowTicket] Accept failed:', err.message);
+      setActionError(err.message || 'Failed to accept ticket');
     } finally {
       setActionLoading(false);
     }
-  }, [ticket, diffs, currentUserId, updateTicket]);
+  }, [ticket, diffs, currentUserId, updateTicket, isPlanTicket]);
 
   const handleReject = useCallback(async (e) => {
     e.stopPropagation();
+    const reason = window.prompt('Why are you rejecting this ticket?', '');
+    if (reason === null) return;
     setActionLoading(true);
+    setActionError(null);
     try {
-      const updated = await rejectTicket(ticket.id);
-      updateTicket(updated);
+      const result = await rejectTicket(ticket.id, reason);
+      const { planTask, ...updatedTicket } = result || {};
+      updateTicket(updatedTicket);
+      if (planTask?.id) {
+        usePlanStore.getState()._applyTaskUpdate(planTask);
+      }
       emitTicketRejected(ticket.id, currentUserId);
+      if (isPlanTicket && ticket.githubPrNumber && owner && repo) {
+        await closePlanPullRequest({ owner, repo, ticket });
+      }
     } catch (err) {
       console.warn('[WorkflowTicket] Reject failed:', err.message);
+      setActionError(err.message || 'Failed to reject ticket');
     } finally {
       setActionLoading(false);
     }
-  }, [ticket, currentUserId, updateTicket]);
+  }, [ticket, currentUserId, updateTicket, isPlanTicket, owner, repo]);
+
+  const handleMerge = useCallback(async (e) => {
+    e.stopPropagation();
+    if (!owner || !repo) {
+      setActionError('Repository coordinates are unavailable for this ticket');
+      return;
+    }
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const result = await approveAndMergePlanPullRequest({ owner, repo, ticket });
+      if (!result.ok) {
+        setActionError(result.error || 'Merge is blocked');
+        return;
+      }
+      const { planTask, ...updatedTicket } = result.ticket || {};
+      updateTicket(updatedTicket);
+      if (planTask?.id) {
+        usePlanStore.getState()._applyTaskUpdate(planTask);
+      }
+    } catch (err) {
+      console.warn('[WorkflowTicket] Merge failed:', err.message);
+      setActionError(err.message || 'Failed to merge pull request');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [ticket, updateTicket, owner, repo]);
 
   return (
     <div className="workflow-ticket-row">
-      {/* Collapsed row */}
       <div className="workflow-ticket-header" onClick={() => setExpanded(!expanded)}>
         <div className="workflow-ticket-avatar">
           {ticket.userPicture ? (
@@ -97,6 +146,7 @@ export default function WorkflowTicketRow({ ticket }) {
         <div className="workflow-ticket-info">
           <div className="workflow-ticket-topline">
             <span className="workflow-ticket-user">{ticket.userName || 'Unknown'}</span>
+            {isPlanTicket && <span className="workflow-ticket-plan-badge">Plan</span>}
             <span className="workflow-ticket-time">{formatAge(ticket.createdAt)}</span>
           </div>
           <div className="workflow-ticket-preview">{ticket.promptPreview || '(no prompt)'}</div>
@@ -118,6 +168,17 @@ export default function WorkflowTicketRow({ ticket }) {
         </span>
 
         <div className="workflow-ticket-actions">
+          {ticket.githubPrUrl && (
+            <a
+              className="workflow-ticket-pr-link"
+              href={ticket.githubPrUrl}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => e.stopPropagation()}
+            >
+              PR #{ticket.githubPrNumber}
+            </a>
+          )}
           {canAccept && (
             <button
               className="workflow-ticket-btn workflow-ticket-btn-accept"
@@ -126,6 +187,16 @@ export default function WorkflowTicketRow({ ticket }) {
               title="Accept changes"
             >
               {actionLoading ? '...' : 'Accept'}
+            </button>
+          )}
+          {canMerge && (
+            <button
+              className="workflow-ticket-btn workflow-ticket-btn-accept"
+              onClick={handleMerge}
+              disabled={actionLoading}
+              title="Approve and merge the pull request"
+            >
+              {actionLoading ? '...' : 'Merge PR'}
             </button>
           )}
           {canReject && (
@@ -142,13 +213,38 @@ export default function WorkflowTicketRow({ ticket }) {
         </div>
       </div>
 
-      {/* Expanded details */}
+      {actionError && <div className="workflow-ticket-action-error">{actionError}</div>}
+
       {expanded && (
         <div className="workflow-ticket-expanded">
           <div className="workflow-ticket-prompt-full">
             <div className="workflow-ticket-section-label">Full Prompt</div>
             <div className="workflow-ticket-prompt-text">{ticket.promptFull || ticket.promptPreview}</div>
           </div>
+
+          {ticket.githubBranch && (
+            <div className="workflow-ticket-pr-info">
+              <div className="workflow-ticket-section-label">Pull Request</div>
+              <div className="workflow-ticket-pr-meta">
+                <span>{ticket.githubBranch}</span>
+                <span className="workflow-ticket-pr-arrow">→</span>
+                <span>{ticket.githubBaseBranch || 'default'}</span>
+                {ticket.githubPrState && (
+                  <span className="workflow-ticket-pr-state">{ticket.githubPrState}</span>
+                )}
+              </div>
+              {ticket.githubPrUrl && (
+                <a
+                  className="workflow-ticket-pr-expanded-link"
+                  href={ticket.githubPrUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Open pull request #{ticket.githubPrNumber}
+                </a>
+              )}
+            </div>
+          )}
 
           {diffs.length > 0 && (
             <div className="workflow-ticket-diffs">

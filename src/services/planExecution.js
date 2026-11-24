@@ -21,8 +21,26 @@ export function resolvePlanRunRequest(text, planState) {
     return { error: 'No active plan in this space. Create a plan in Plan mode first.' };
   }
 
+  const activeTask = (planState.tasks || []).find(
+    (task) => task.status === 'working_on' || task.status === 'to_review'
+  );
+  if (activeTask) {
+    return {
+      error: 'A plan task is already active. Finish or review it before starting another.',
+    };
+  }
+
+  const completedIds = new Set(
+    (planState.tasks || [])
+      .filter((task) => task.status === 'completed')
+      .map((task) => task.id)
+  );
+
   const todoTasks = (planState.tasks || [])
-    .filter((task) => task.status === 'todo')
+    .filter((task) =>
+      task.status === 'todo' &&
+      (task.dependsOn || []).every((id) => completedIds.has(id))
+    )
     .sort((a, b) => {
       const orderDiff = (a.sortOrder || 0) - (b.sortOrder || 0);
       if (orderDiff !== 0) return orderDiff;
@@ -64,4 +82,20 @@ export function buildPlanRunPrompt(plan, task, remainingTasks = []) {
   }
 
   return lines.join('\n');
+}
+
+export function buildOrchestratedPlanRunPrompt(plan, task) {
+  return [
+    `Execute the next task in the existing plan "${plan.title}".`,
+    '',
+    `Current task: ${task.text}`,
+    '',
+    'Instructions:',
+    '- Work only on the current task. Do not start or describe other plan tasks.',
+    '- Do not call create_plan, add_task, complete_task, or any plan editing tool.',
+    '- Read the relevant files before editing. Use the edit tool with exact current text.',
+    '- Produce the complete, final content for every file you create or change.',
+    '- Do not create a branch, commit, push, or open a pull request. The runner handles delivery.',
+    '- Do not output SEARCH/REPLACE markers in the final file content.',
+  ].join('\n');
 }

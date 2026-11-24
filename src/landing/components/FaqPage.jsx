@@ -132,7 +132,7 @@ const FaqPage = ({ onClose }) => (
         <h1>Frequently asked questions</h1>
         <p className="faq-intro">
           A practical guide to building diagrams, connecting code, choosing models,
-          and collaborating in Volscape. This page is available from the FAQ button
+          and collaborating in CodeHedron. This page is available from the FAQ button
           in the top bar whether you are signed in or browsing anonymously.
         </p>
       </div>

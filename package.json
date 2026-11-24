@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build --emptyOutDir",
+    "build": "vite build --emptyOutDir && node scripts/prerender-seo.mjs",
     "build:wasm": "wasm-pack build src/wasm --target web --out-dir pkg --release",
     "lint": "eslint .",
     "preview": "vite preview",
