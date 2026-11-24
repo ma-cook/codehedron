@@ -78,8 +78,17 @@
     }
     </script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
+    <script>
+      // Mark JS-capable browsers before first paint. The prerendered SEO
+      // content inside #root (injected by scripts/prerender-seo.mjs) is then
+      // hidden from real users - React replaces it on mount - while crawlers
+      // that don't execute JavaScript never add this class and still see the
+      // full readable fallback.
+      document.documentElement.classList.add('js');
+    </script>
     <style>
       body { margin: 0; padding: 0; overflow: hidden; }
+      .js #seo-prerendered { display: none; }
     </style>
   </head>
   <body>
