@@ -15,6 +15,7 @@ import { api, onSocket, emitSocket } from '../api-client';
  *   workflow:ticket:updated   — ticket status/diffs changed
  *   workflow:ticket:accepted  — ticket accepted by a user
  *   workflow:ticket:rejected  — ticket rejected by a user
+ *   workflow:ticket:deleted   — ticket removed from workflow
  *
  * The backend broadcasts these to all clients in the same space room.
  * Clients filter by spaceId on the client side for safety.
@@ -58,6 +59,11 @@ export async function rejectTicket(ticketId, reason) {
   return ticket;
 }
 
+export async function deleteTicket(ticketId) {
+  const result = await api.delete(`/api/workflow/tickets/${ticketId}`);
+  return result || null;
+}
+
 export async function markTicketMerged(ticketId, mergeCommitSha) {
   const ticket = await api.post(`/api/workflow/tickets/${ticketId}/merged`, {
     mergeCommitSha: mergeCommitSha || null,
@@ -72,11 +78,11 @@ export async function markTicketMerged(ticketId, mergeCommitSha) {
  * Returns an unsubscribe function.
  *
  * @param {string} spaceId - The space to watch
- * @param {object} callbacks - { onCreated, onUpdated, onAccepted, onRejected }
+ * @param {object} callbacks - { onCreated, onUpdated, onAccepted, onRejected, onDeleted }
  * @returns {function} unsubscribe
  */
 export function subscribeToTickets(spaceId, callbacks) {
-  const { onCreated, onUpdated, onAccepted, onRejected } = callbacks;
+  const { onCreated, onUpdated, onAccepted, onRejected, onDeleted } = callbacks;
 
   const unsubs = [
     onSocket('workflow:ticket:created', (data) => {
@@ -90,6 +96,9 @@ export function subscribeToTickets(spaceId, callbacks) {
     }),
     onSocket('workflow:ticket:rejected', (data) => {
       if (data?.ticket?.spaceId === spaceId) onRejected?.(data);
+    }),
+    onSocket('workflow:ticket:deleted', (data) => {
+      if (data?.spaceId === spaceId) onDeleted?.(data);
     }),
   ];
 
@@ -112,4 +121,8 @@ export function emitTicketAccepted(ticketId, userId) {
 
 export function emitTicketRejected(ticketId, userId) {
   emitSocket('workflow:ticket:rejected', { ticketId, userId });
+}
+
+export function emitTicketDeleted(ticketId, spaceId) {
+  emitSocket('workflow:ticket:deleted', { ticketId, spaceId });
 }

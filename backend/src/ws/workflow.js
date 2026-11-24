@@ -9,6 +9,12 @@ const TICKET_EVENTS = [
 ];
 
 export function registerWorkflowHandlers(io, socket) {
+  socket.on('workflow:ticket:deleted', ({ ticketId, spaceId } = {}) => {
+    if (!ticketId || !spaceId) return;
+    if (typeof ticketId !== 'string' || typeof spaceId !== 'string') return;
+    socket.to(`space:${spaceId}`).emit('workflow:ticket:deleted', { ticketId, spaceId });
+  });
+
   for (const event of TICKET_EVENTS) {
     socket.on(event, async (payload = {}) => {
       const ticketId = payload.ticket?.id || payload.ticketId;

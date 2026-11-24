@@ -262,6 +262,63 @@ ticketItemRouter.patch('/', async (req, res) => {
   }
 });
 
+ticketItemRouter.delete('/', async (req, res) => {
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const locked = await client.query(
+      `SELECT * FROM workflow_tickets WHERE id = $1 AND space_id = $2 FOR UPDATE`,
+      [req.ticket.id, req.ticket.space_id]
+    );
+    const ticket = locked.rows[0];
+    if (!ticket) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Workflow ticket not found' });
+    }
+
+    let planTask = null;
+    if (ticket.plan_task_id && ticket.status !== 'merged') {
+      const taskResult = await client.query(
+        `UPDATE plan_tasks
+         SET status = 'todo',
+             completed_at = NULL,
+             claimed_by = NULL,
+             claimed_at = NULL,
+             claim_token = NULL,
+             ticket_id = NULL,
+             last_error = $1
+         WHERE id = $2
+           AND space_id = $3
+           AND status IN ('working_on', 'to_review')
+           AND (ticket_id IS NULL OR ticket_id = $4)
+         RETURNING *`,
+        ['Ticket removed from workflow', ticket.plan_task_id, ticket.space_id, ticket.id]
+      );
+      planTask = taskResult.rows[0] || null;
+    }
+
+    await client.query(
+      `DELETE FROM workflow_tickets WHERE id = $1 AND space_id = $2`,
+      [ticket.id, ticket.space_id]
+    );
+
+    await client.query('COMMIT');
+    res.json({
+      ticketId: ticket.id,
+      spaceId: ticket.space_id,
+      planTask,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Delete workflow ticket error:', err);
+    res.status(500).json({ error: 'Failed to delete workflow ticket' });
+  } finally {
+    client.release();
+  }
+});
+
 ticketItemRouter.post('/accept', async (req, res) => {
   try {
     const result = await pool.query(

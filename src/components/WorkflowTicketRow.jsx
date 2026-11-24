@@ -1,9 +1,17 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import useWorkflowStore from '../stores/workflowStore';
 import useAuthStore from '../stores/authStore';
 import useCodeStore from '../stores/codeStore';
 import usePlanStore from '../stores/planStore';
-import { acceptTicket, rejectTicket, emitTicketAccepted, emitTicketRejected } from '../services/workflowService';
+import { confirmDialog } from '../stores/dialogStore';
+import {
+  acceptTicket,
+  rejectTicket,
+  deleteTicket,
+  emitTicketAccepted,
+  emitTicketRejected,
+  emitTicketDeleted,
+} from '../services/workflowService';
 import { approveAndMergePlanPullRequest, closePlanPullRequest } from '../services/planPullRequestService';
 import WorkflowTicketDiff from './WorkflowTicketDiff';
 
@@ -30,7 +38,10 @@ export default function WorkflowTicketRow({ ticket }) {
   const [expanded, setExpanded] = useState(false);
   const [actionLoading, setActionLoading] = useState(false);
   const [actionError, setActionError] = useState(null);
+  const [menuPosition, setMenuPosition] = useState(null);
+  const statusMenuRef = useRef(null);
   const updateTicket = useWorkflowStore((s) => s.updateTicket);
+  const removeTicket = useWorkflowStore((s) => s.removeTicket);
   const currentUserId = useAuthStore((s) => s.user?.uid || s.user?.sub);
   const repoOwner = useCodeStore((s) => s.repoOwner);
   const repoName = useCodeStore((s) => s.repoName);
@@ -47,6 +58,35 @@ export default function WorkflowTicketRow({ ticket }) {
   const diffs = useMemo(() => ticket.diffs || [], [ticket.diffs]);
   const owner = repoOwner || selectedRepo?.owner?.login || null;
   const repo = repoName || selectedRepo?.name || null;
+  const menuOpen = menuPosition !== null;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleOutside = (event) => {
+      if (statusMenuRef.current?.contains(event.target)) return;
+      setMenuPosition(null);
+    };
+    document.addEventListener('mousedown', handleOutside);
+    return () => document.removeEventListener('mousedown', handleOutside);
+  }, [menuOpen]);
+
+  const toggleStatusMenu = useCallback((e) => {
+    e.stopPropagation();
+    if (menuOpen) {
+      setMenuPosition(null);
+      return;
+    }
+    const button = statusMenuRef.current?.querySelector('.workflow-ticket-status');
+    const rect = button?.getBoundingClientRect();
+    if (!rect) return;
+    const menuWidth = 150;
+    const menuHeight = 42;
+    const left = Math.max(8, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - 8));
+    const top = rect.bottom + menuHeight + 8 > window.innerHeight
+      ? rect.top - menuHeight - 4
+      : rect.bottom + 4;
+    setMenuPosition({ top, left });
+  }, [menuOpen]);
 
   const handleAccept = useCallback(async (e) => {
     e.stopPropagation();
@@ -102,6 +142,38 @@ export default function WorkflowTicketRow({ ticket }) {
       setActionLoading(false);
     }
   }, [ticket, currentUserId, updateTicket, isPlanTicket, owner, repo]);
+
+  const handleRemove = useCallback(async (e) => {
+    e.stopPropagation();
+    setMenuPosition(null);
+    const confirmed = await confirmDialog({
+      title: 'Remove workflow ticket?',
+      message: isPlanTicket
+        ? 'This removes the ticket from the workflow and resets its plan task so it can run again. Any open pull request is closed.'
+        : 'This removes the ticket from the workflow. Any open pull request is closed.',
+      confirmLabel: 'Remove',
+    });
+    if (!confirmed) return;
+
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const result = await deleteTicket(ticket.id);
+      if (result?.planTask?.id) {
+        usePlanStore.getState()._applyTaskUpdate(result.planTask);
+      }
+      removeTicket(ticket.id);
+      emitTicketDeleted(ticket.id, ticket.spaceId);
+      if (isPlanTicket && ticket.status !== 'merged' && ticket.githubPrNumber && owner && repo) {
+        await closePlanPullRequest({ owner, repo, ticket });
+      }
+    } catch (err) {
+      console.warn('[WorkflowTicket] Remove failed:', err.message);
+      setActionError(err.message || 'Failed to remove ticket');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [ticket, isPlanTicket, owner, repo, removeTicket]);
 
   const handleMerge = useCallback(async (e) => {
     e.stopPropagation();
@@ -160,12 +232,41 @@ export default function WorkflowTicketRow({ ticket }) {
           )}
         </div>
 
-        <span
-          className="workflow-ticket-status"
-          style={{ color: status.color, background: status.bg, borderColor: status.border }}
+        <div
+          className="workflow-ticket-status-wrap"
+          ref={statusMenuRef}
+          onClick={(e) => e.stopPropagation()}
         >
-          {status.label}
-        </span>
+          <button
+            type="button"
+            className="workflow-ticket-status workflow-ticket-status-button"
+            style={{ color: status.color, background: status.bg, borderColor: status.border }}
+            onClick={toggleStatusMenu}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="Ticket actions"
+          >
+            {status.label}
+            <span className="workflow-ticket-status-caret">{'\u25BE'}</span>
+          </button>
+          {menuPosition && (
+            <div
+              className="workflow-ticket-status-menu"
+              role="menu"
+              style={{ top: menuPosition.top, left: menuPosition.left }}
+            >
+              <button
+                type="button"
+                role="menuitem"
+                className="workflow-ticket-status-remove"
+                onClick={handleRemove}
+                disabled={actionLoading}
+              >
+                {actionLoading ? 'Removing...' : 'Remove'}
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="workflow-ticket-actions">
           {ticket.githubPrUrl && (

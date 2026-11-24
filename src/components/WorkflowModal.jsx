@@ -22,6 +22,7 @@ export default function WorkflowModal() {
   const setTickets = useWorkflowStore((s) => s.setTickets);
   const addTicket = useWorkflowStore((s) => s.addTicket);
   const updateTicket = useWorkflowStore((s) => s.updateTicket);
+  const removeTicket = useWorkflowStore((s) => s.removeTicket);
   const isLoading = useWorkflowStore((s) => s.isLoading);
   const setIsLoading = useWorkflowStore((s) => s.setIsLoading);
   const spaceId = useSpaceManagerStore((s) => s.currentSpaceId);
@@ -58,9 +59,14 @@ export default function WorkflowModal() {
       onUpdated: applyTicket,
       onAccepted: (data) => applyTicket(data.ticket),
       onRejected: (data) => applyTicket(data.ticket),
+      onDeleted: (data) => {
+        if (!data?.ticketId) return;
+        removeTicket(data.ticketId);
+        refreshPlan();
+      },
     });
     return unsub;
-  }, [spaceId, addTicket, updateTicket, refreshPlan]);
+  }, [spaceId, addTicket, updateTicket, removeTicket, refreshPlan]);
 
   const handleClose = useCallback(() => setModalOpen(false), [setModalOpen]);
 
