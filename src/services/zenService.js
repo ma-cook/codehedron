@@ -1230,11 +1230,17 @@ export async function buildCodeGenMessages({ userRequest, sceneObjects, techStac
   }
 
   const repoMap = buildRepoMap(repoContext, sceneObjects);
+  // Mirrors buildRepoMap's fallback so the tool subset (computeTools hasRepo)
+  // and the prompt always agree about whether a repository exists.
+  const hasRepo = (repoContext?.fileTree?.length ?? 0) > 0
+    || (useCodeStore.getState().repoFileTree?.length ?? 0) > 0;
+  const greenfieldSection = hasRepo ? '' : `\n\nGREENFIELD TASK: no repository is connected and no repository files exist. Do NOT call search_code, list_files, file_outline, quick_look, or read_file - they return nothing and waste your budget. Create every file with the write tool from scratch. The read-before-edit rules apply only to files that already exist; none do. If the task depends on existing code you have not been given, ask the user for it via ask_user.`;
 
   const systemContent = CODE_GEN_SYSTEM_PROMPT
     .replace('{techStack}', techStackSection)
-    .replace('{projectNotes}', projectNotes || '(none loaded — if the repo has AGENTS.md or README conventions, read them yourself)')
+    .replace('{projectNotes}', projectNotes || '(none loaded - if the repo has AGENTS.md or README conventions, read them yourself)')
     .replace('{repoMap}', repoMap)
+    + greenfieldSection
     + (workflowContext ? `\n\n${workflowContext}` : '');
 
   console.log(`[buildCodeGenMessages] System prompt: ${systemContent.length} chars`);

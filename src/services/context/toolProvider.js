@@ -351,10 +351,19 @@ const TASK_TYPE_TOOLS = new Map([
   ])],
 ]);
 
+// Greenfield code-gen: no repository is connected, so search/read/outline
+// tools return nothing and their read-before-edit obligations deadlock the
+// model (measured: GLM 5.3-flash reason-loops to budget death when ordered to
+// verify files that do not exist). Only file creation and planning remain.
+const GREENFIELD_CODEGEN_TOOLS = new Set([
+  'set_mode', 'ask_user', 'write',
+  'create_plan', 'add_task', 'complete_task', 'get_plan',
+]);
+
 export function computeTools(opts = {}) {
   const {
     excludeExplorationTools = false, excludeReadTool = false,
-    mode = 'research', taskType = null,
+    mode = 'research', taskType = null, hasRepo = true,
   } = opts;
   const always = [...SKILL_MANAGEMENT_TOOLS, ...CONTROL_TOOLS, ...NAVIGATION_TOOLS, ...PLAN_TOOLS];
   const conditional = [...GRAPH_TOOLS, ...COMMUNITY_TOOLS, ...LSP_TOOLS, ...MODIFICATION_TOOLS, ...SUB_AGENT_TOOL];
@@ -382,6 +391,10 @@ export function computeTools(opts = {}) {
   const taskSubset = taskType ? TASK_TYPE_TOOLS.get(taskType) : null;
   if (taskSubset) {
     result = result.filter(t => taskSubset.has(t.function.name));
+  }
+
+  if (taskType === 'code-gen' && !hasRepo) {
+    result = result.filter(t => GREENFIELD_CODEGEN_TOOLS.has(t.function.name));
   }
 
   if (excludeExplorationTools) {

@@ -13,6 +13,7 @@ import { buildSearchReplaceBlock } from './diffUtils';
 import { joinChunks } from './chunkIndex';
 import { recordFileRead } from './toolState';
 import useLlmEditActivityStore from '../../stores/llmEditActivityStore';
+import useCodeStore from '../../stores/codeStore';
 
 const MAX_UNHELPFUL_ROUNDS = 5;
 const MAX_SAME_FILE_READS = 2;
@@ -927,6 +928,10 @@ export async function sendWithRetrieval({
   let reasoningContinuationPending = false;
   // How many passive-wait endings have been re-nudged through ask_user.
   let passiveWaitNudges = 0;
+  // Greenfield run: no repository is connected, so repo tools (search/read/
+  // outline) have nothing to operate on. Mirrors buildRepoMap's fallback.
+  const hasRepo = (fileTree?.length ?? 0) > 0
+    || (useCodeStore.getState().repoFileTree?.length ?? 0) > 0;
 
   resetEditTracker();
   // Mark the run active so the scene can highlight files as they're edited.
@@ -1211,7 +1216,7 @@ export async function sendWithRetrieval({
     let rateLimitRetriesLeft = 1;
     for (let sendAttempt = 0; sendAttempt <= MAX_SEND_RETRIES; sendAttempt++) {
       try {
-        const availableTools = computeTools({ mode: currentMode, taskType: taskTypeFilter });
+        const availableTools = computeTools({ mode: currentMode, taskType: taskTypeFilter, hasRepo });
         currentToolNames = new Set(availableTools.map(t => t.function.name));
         rawResult = await sendToZen({
           messages: currentMessages,

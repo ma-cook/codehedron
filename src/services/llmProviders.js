@@ -427,6 +427,18 @@ export async function sendToProvider({
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
 
+  // TEMP DEBUG (reasoning-budget A/B) - remove after diagnosis. Logs the exact
+  // request payload with the API key redacted; scripts/llm-ab-test.mjs
+  // re-injects the key and replays it against each egress.
+  console.log('[sendToProvider][DEBUG] payload:', JSON.stringify({
+    url,
+    headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [
+      k,
+      /authorization|x-api-key/i.test(k) ? `${String(v).slice(0, 12)}...` : v,
+    ])),
+    body,
+  }));
+
   const requestStartedAt = Date.now();
   console.log(`[sendToProvider] ${provider.name} request started model=${model} reasoning=${reasoningEffort || 'default'}`);
   onChunk?.('', 'Calling provider…');
