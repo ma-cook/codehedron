@@ -81,17 +81,18 @@ function applyReasoningModelOptions(body, model, reasoningEffort) {
   return body;
 }
 
-// GLM 5.3 on NVIDIA: measured on the live proxy, requests used to cluster at
-// ~290-302s because the model burned its whole token budget on reasoning right
-// at NVIDIA's ~300s gateway limit. Streaming (Accept: text/event-stream in the
-// proxy) removed the 504s, but the model still reasoned for entire rounds
-// without answering. Every thinking-disable convention we tried
-// (reasoning_effort, thinking_mode, thinking, enable_thinking — separately and
-// combined) is ignored by this NIM, and the conflicting mix may make the
-// template reason longer. opencode's validated shape sends NO reasoning
-// parameters at all — match it. Reasoning length is prompt-driven; the client's
-// Reason select is a no-op for Nvidia.
-const NVIDIA_MAX_TOKENS = 8192;
+// GLM 5.3 on NVIDIA: thinking cannot be disabled or bounded via API
+// parameters (every convention tested is ignored) and its thinking budget
+// scales with max_tokens. A tight cap makes the model hit
+// finish_reason=length mid-thought — a reasoning-only turn with no answer
+// (measured at 8192: ~8k reasoning tokens, then death; the model was planning
+// a multi-file implementation and never reached its first tool call). With
+// streaming (Accept: text/event-stream in the proxies) there is no ~300s
+// gateway-504 pressure on long generations anymore — TTFB is seconds and
+// tokens flow continuously — so give it opencode's effective shape: a cap
+// large enough that thinking terminates naturally and the answer still fits.
+// opencode never exhausts because it doesn't cap tightly.
+const NVIDIA_MAX_TOKENS = 32768;
 
 function parseOpenAiStreamLine(line) {
   if (!line.startsWith('data:')) return null;
@@ -426,18 +427,6 @@ export async function sendToProvider({
     ? provider.formatEndpoint(apiKey, model)
     : provider.chatEndpoint;
   const headers = provider.getHeaders(apiKey);
-
-  // TEMP DEBUG (reasoning-budget A/B) - remove after diagnosis. Logs the exact
-  // request payload with the API key redacted; scripts/llm-ab-test.mjs
-  // re-injects the key and replays it against each egress.
-  console.log('[sendToProvider][DEBUG] payload:', JSON.stringify({
-    url,
-    headers: Object.fromEntries(Object.entries(headers).map(([k, v]) => [
-      k,
-      /authorization|x-api-key/i.test(k) ? `${String(v).slice(0, 12)}...` : v,
-    ])),
-    body,
-  }));
 
   const requestStartedAt = Date.now();
   console.log(`[sendToProvider] ${provider.name} request started model=${model} reasoning=${reasoningEffort || 'default'}`);

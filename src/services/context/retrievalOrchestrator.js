@@ -138,6 +138,7 @@ const STUCK_EXPLORING_THRESHOLD = 10;
 // so a truly stuck model still terminates.
 const REASONING_CONTINUATION_LIMIT = 2;
 const REASONING_CONTINUATION_NUDGE = `[System: your previous turn was entirely internal reasoning and hit the token budget before producing any output. Do not re-derive. Decide now and act immediately: call a tool, or answer in at most 3 sentences.]`;
+const REASONING_CONTINUATION_FINAL_NUDGE = `[System: FINAL continuation - you have now exhausted the reasoning budget twice without emitting a single tool call or answer. Whatever you were planning, stop planning it and start executing it: your very next output MUST be a tool call (read_file, set_mode("edit"), edit, or write) or an answer of at most 3 sentences. Any response without a tool call or an answer ends this run.]`;
 // Passive-wait endings: a model that ends its turn with "(waiting for token)"
 // instead of calling ask_user stops the run with the user none the wiser.
 // Re-nudge it through the proper channel, bounded so a stubborn model still
@@ -1240,9 +1241,12 @@ export async function sendWithRetrieval({
           if (reasoningContinuations < REASONING_CONTINUATION_LIMIT) {
             reasoningContinuations++;
             reasoningContinuationPending = true;
+            const nudgeText = reasoningContinuations >= REASONING_CONTINUATION_LIMIT
+              ? REASONING_CONTINUATION_FINAL_NUDGE
+              : REASONING_CONTINUATION_NUDGE;
             currentMessages = [...currentMessages, {
               role: 'user',
-              content: REASONING_CONTINUATION_NUDGE,
+              content: nudgeText,
             }];
             finalText = (finalText ? finalText + '\n\n' : '') +
               `[Model over-thought its turn and hit the reasoning budget - nudging it to act now (${reasoningContinuations}/${REASONING_CONTINUATION_LIMIT})...]`;
