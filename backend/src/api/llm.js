@@ -163,6 +163,33 @@ function opencodeClientHeaders() {
 let activeChatRequests = 0;
 let chatRequestTotal = 0;
 
+function requestFingerprint(body) {
+  const messages = Array.isArray(body?.messages) ? body.messages : [];
+  const contentLength = (m) => typeof m?.content === 'string' ? m.content.length : Array.isArray(m?.content)
+    ? m.content.reduce((n, part) => n + String(part?.text || '').length, 0)
+    : 0;
+  const totalChars = messages.reduce((n, m) => n + contentLength(m), 0);
+  const systemChars = messages.filter((m) => m?.role === 'system').reduce((n, m) => n + contentLength(m), 0);
+  const toolCount = Array.isArray(body?.tools) ? body.tools.length : 0;
+  const fp = crypto.createHash('sha1').update(JSON.stringify({
+    model: body?.model,
+    stream: body?.stream,
+    maxTokens: body?.max_tokens,
+    messages: messages.map((m) => ({ role: m?.role, chars: contentLength(m) })),
+    tools: toolCount,
+    keys: Object.keys(body || {}).sort(),
+  })).digest('hex').slice(0, 12);
+  return `fp=${fp} msgChars=${totalChars} systemChars=${systemChars} tools=${toolCount} maxTokens=${body?.max_tokens}`;
+}
+
+function upstreamDiagnosticHeaders(headers) {
+  const out = {};
+  for (const [k, v] of headers.entries()) {
+    if (/request|trace|correlation|^x-nvidia|^cf-ray/i.test(k)) out[k] = v;
+  }
+  return out;
+}
+
 router.post('/chat', async (req, res) => {
   let parsed;
   try {
@@ -182,7 +209,7 @@ router.post('/chat', async (req, res) => {
   const authEntry = Object.entries(headers || {}).find(([k]) => /^(authorization|x-api-key)$/i.test(k));
   const keyHint = authEntry ? String(authEntry[1]).slice(0, 12) : 'none';
   chatRequestTotal++;
-  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} reasoning=${body?.reasoning_effort || body?.chat_template_kwargs?.thinking_mode || 'default'} messages=${(body?.messages || []).length} tools=${(body?.tools || []).length} maxTokens=${body?.max_tokens} key=${keyHint} total=${chatRequestTotal}`);
+  console.log(`[llm-proxy] REQ ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} reasoning=${body?.reasoning_effort || body?.chat_template_kwargs?.thinking_mode || 'default'} messages=${(body?.messages || []).length} ${requestFingerprint(body)} key=${keyHint} total=${chatRequestTotal}`);
 
   const slot = await waitForThrottleSlot(host, req, res);
   if (slot !== 'acquired') return;
@@ -233,7 +260,13 @@ router.post('/chat', async (req, res) => {
       upstreamRateLimited = true;
       console.warn(`[llm-proxy] 429 from ${host}: retryAfter=${retryAfter || 'none'} fullHeaders=${JSON.stringify([...upstream.headers.entries()])}`);
     }
-    console.log(`[llm-proxy] RES ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} status=${upstream.status} elapsedMs=${elapsedMs} retryAfter=${retryAfter || 'none'} ratelimit=${JSON.stringify(rateHeaders)} total=${chatRequestTotal} active=${activeChatRequests}`);
+    const diagnosticHeaders = upstreamDiagnosticHeaders(upstream.headers);
+    const upstreamRequestId = upstream.headers.get('x-request-id')
+      || upstream.headers.get('x-nvidia-request-id')
+      || upstream.headers.get('nvidia-request-id')
+      || null;
+    if (upstreamRequestId) res.setHeader('x-upstream-request-id', upstreamRequestId);
+    console.log(`[llm-proxy] RES ${new Date().toISOString()} ip=${clientIp} host=${host} model=${model} status=${upstream.status} elapsedMs=${elapsedMs} retryAfter=${retryAfter || 'none'} ratelimit=${JSON.stringify(rateHeaders)} diag=${JSON.stringify(diagnosticHeaders)} total=${chatRequestTotal} active=${activeChatRequests}`);
 
     res.status(upstream.status);
 

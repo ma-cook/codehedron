@@ -1,0 +1,8 @@
+name = "codehedron-llm-proxy"
+main = "worker.js"
+compatibility_date = "2026-11-01"
+
+[vars]
+# volscape.com allowed during the domain transition — remove once traffic
+# has fully moved to codehedron.dev.
+ALLOWED_ORIGINS = "https://codehedron.dev,https://volscape.com,http://localhost:5173,http://localhost:4173"

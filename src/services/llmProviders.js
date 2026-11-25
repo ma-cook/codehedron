@@ -1,4 +1,10 @@
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+// Cloudflare Worker egress for NVIDIA. Cloud Run's Google egress IP is
+// 504-throttled by NVIDIA's gateway (~300s even for tiny requests, measured
+// against a 26s direct response on the same payload), so NVIDIA chat goes
+// through the Worker first and falls back to the Cloud Run proxy on
+// gateway-class errors. Other providers always use Cloud Run.
+const CF_LLM_BASE = import.meta.env.VITE_CF_LLM_URL || '';
 
 async function gzipBytes(str) {
   return new TextEncoder().encode(str);
@@ -314,6 +320,94 @@ export async function fetchModels(providerId, apiKey) {
   }
 }
 
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function buildNvidiaAbBodies(body) {
+  const current = cloneJson(body);
+
+  const noTools = cloneJson(body);
+  delete noTools.tools;
+
+  const minimalSystem = cloneJson(body);
+  delete minimalSystem.tools;
+  minimalSystem.messages = (minimalSystem.messages || []).map((m) => m?.role === 'system'
+    ? { ...m, content: 'Complete the user task. Return only the final file contents.' }
+    : m);
+
+  const lowTokens = cloneJson(body);
+  lowTokens.max_tokens = 4096;
+
+  return [
+    { name: 'current', body: current },
+    { name: 'no-tools', body: noTools },
+    { name: 'minimal-system-no-tools', body: minimalSystem },
+    { name: 'max-tokens-4096', body: lowTokens },
+  ];
+}
+
+async function proxyLlmChat({ url, headers, body, signal, timeoutMs }) {
+  const timeoutController = new AbortController();
+  const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, timeoutController.signal])
+    : timeoutController.signal;
+  const startedAt = Date.now();
+  try {
+    const res = await fetch(`${API_BASE}/api/llm/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: await gzipBytes(JSON.stringify({ url, headers, body })),
+      signal: combinedSignal,
+    });
+    return { res, elapsedMs: Date.now() - startedAt };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function runNvidiaAb({ url, headers, body, signal, timeoutMs, onChunk }) {
+  const variants = buildNvidiaAbBodies(body);
+  const results = [];
+  let lastError = null;
+
+  for (const variant of variants) {
+    const startedAt = Date.now();
+    try {
+      const { res, elapsedMs } = await proxyLlmChat({
+        url,
+        headers,
+        body: variant.body,
+        signal,
+        timeoutMs,
+      });
+      const requestId = res.headers.get('x-upstream-request-id') || 'none';
+      const summary = `variant=${variant.name} status=${res.status} timeToHeadersMs=${elapsedMs} requestId=${requestId} tools=${(variant.body.tools || []).length} maxTokens=${variant.body.max_tokens}`;
+      console.log(`[NvidiaAB] ${summary}`);
+      onChunk?.('', `A/B ${variant.name}: ${res.status} in ${Math.round(elapsedMs / 1000)}s`);
+      results.push(summary);
+      if (res.ok) {
+        console.warn(`[NvidiaAB] success=${variant.name} after ${results.length}/${variants.length} variants`);
+        return { res, variant: variant.name };
+      }
+      const detail = await res.text().catch(() => '');
+      if (detail) console.warn(`[NvidiaAB] ${variant.name} body=${detail.slice(0, 200)}`);
+      lastError = new Error(`Nvidia A/B variant ${variant.name} failed with ${res.status}`);
+      lastError.status = res.status;
+    } catch (err) {
+      if (err?.name === 'AbortError') throw err;
+      const summary = `variant=${variant.name} error=${err?.message || err} timeMs=${Date.now() - startedAt}`;
+      console.warn(`[NvidiaAB] ${summary}`);
+      results.push(summary);
+      lastError = err;
+    }
+  }
+
+  console.warn(`[NvidiaAB] all variants failed: ${results.join(' | ')}`);
+  throw lastError || new Error('Nvidia A/B failed');
+}
+
 export async function sendToProvider({
   providerId,
   apiKey,
@@ -366,23 +460,45 @@ export async function sendToProvider({
   // silent rounds of that read as a dead app instead of an error.
   let gatewayRetried = false;
 
+  // NVIDIA cycles egress across attempts: Cloudflare Worker first, then the
+  // Cloud Run proxy. Other providers only ever hit Cloud Run.
+  const proxyBases = providerId === 'nvidia' && CF_LLM_BASE
+    ? [CF_LLM_BASE, API_BASE]
+    : [API_BASE];
+
+  let abResult = null;
+  if (providerId === 'nvidia' && typeof localStorage !== 'undefined' && localStorage.getItem('llm:abNvidia') === '1') {
+    localStorage.removeItem('llm:abNvidia');
+    onChunk?.('', 'Running NVIDIA payload A/B…');
+    abResult = await runNvidiaAb({ url, headers, body, signal, timeoutMs, onChunk });
+    onChunk?.('', `Using ${abResult.variant} payload…`);
+  }
+
   let res;
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const timeoutController = new AbortController();
-    const timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
-    const combinedSignal = signal
-      ? AbortSignal.any([signal, timeoutController.signal])
-      : timeoutController.signal;
+    let timeoutId = null;
 
     try {
+      if (abResult) {
+        res = abResult.res;
+        abResult = null;
+      } else {
+        const timeoutController = new AbortController();
+        timeoutId = setTimeout(() => timeoutController.abort(), timeoutMs);
+        const combinedSignal = signal
+          ? AbortSignal.any([signal, timeoutController.signal])
+          : timeoutController.signal;
       const payload = JSON.stringify({ url, headers, body });
-      res = await fetch(`${API_BASE}/api/llm/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: await gzipBytes(payload),
-        signal: combinedSignal,
-      });
+      const proxyBase = proxyBases[Math.min(attempt, proxyBases.length - 1)];
+      res = await fetch(`${proxyBase}/api/llm/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: await gzipBytes(payload),
+          signal: combinedSignal,
+        });
+      }
       clearTimeout(timeoutId);
+      timeoutId = null;
 
       if (res.ok) break;
 
