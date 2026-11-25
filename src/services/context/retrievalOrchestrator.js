@@ -137,6 +137,12 @@ const STUCK_EXPLORING_THRESHOLD = 10;
 // so a truly stuck model still terminates.
 const REASONING_CONTINUATION_LIMIT = 2;
 const REASONING_CONTINUATION_NUDGE = `[System: your previous turn was entirely internal reasoning and hit the token budget before producing any output. Do not re-derive. Decide now and act immediately: call a tool, or answer in at most 3 sentences.]`;
+// Passive-wait endings: a model that ends its turn with "(waiting for token)"
+// instead of calling ask_user stops the run with the user none the wiser.
+// Re-nudge it through the proper channel, bounded so a stubborn model still
+// ends the run and the user can reply in chat.
+const PASSIVE_WAIT_NUDGE_LIMIT = 2;
+const PASSIVE_WAIT_NUDGE = `[You ended your turn waiting for user input without asking. When you do that, the run stops and the user may never realize they were being asked. If you need information, a credential, or a decision from the user, call the ask_user tool with ONE specific question (plus optional "options" to choose from) - the harness pauses and shows it to them, then hands you their answer so you can continue. If you can proceed without the information, do so now and state the assumption explicitly.]`;
 // After the first round-32 nudge, keep re-nudging the model toward generation
 // at this cadence instead of ever stripping tools / force-stopping the run.
 const GENERATION_NUDGE_INTERVAL = 5;
@@ -919,6 +925,8 @@ export async function sendWithRetrieval({
   // processing and jump straight to the next round.
   let reasoningContinuations = 0;
   let reasoningContinuationPending = false;
+  // How many passive-wait endings have been re-nudged through ask_user.
+  let passiveWaitNudges = 0;
 
   resetEditTracker();
   // Mark the run active so the scene can highlight files as they're edited.
@@ -1356,10 +1364,25 @@ export async function sendWithRetrieval({
       }
       // Text with no tool calls is only a FINISH when the work is actually
       // done. For a code-gen task with no edits yet and no code block in the
-      // reply, the text is almost always a preamble ("I'll investigate…") with
-      // the tool call the model forgot to emit — ending the run there silently
+      // reply, the text is almost always a preamble ("I'll investigate.") with
+      // the tool call the model forgot to emit - ending the run there silently
       // produces no code. Re-nudge it to actually call tools; the MAX_ROUNDS
       // cap and the final-round forcing message bound this loop.
+      const isPassiveWait = toolCalls.length === 0
+        && /(?:wait(?:ing)?|await(?:ing)?)\s+for\s+(?:the\s+|your\s+|my\s+)?(?:user|you|token|credential|password|api[\s_-]?key|approval|confirmation|input|answer|response|access)/i
+          .test(text || '')
+        || /\b(?:needs?|requires?)\s+(?:the\s+)?(?:user|your)\b/i.test(text || '')
+        || /\bask\s+the\s+user\b/i.test(text || '');
+      if (isPassiveWait && passiveWaitNudges < PASSIVE_WAIT_NUDGE_LIMIT) {
+        passiveWaitNudges++;
+        console.warn(`[ToolRound] Passive wait ending in round ${rounds + 1} ("${(text || '').slice(0, 90)}") - re-nudging through ask_user (${passiveWaitNudges}/${PASSIVE_WAIT_NUDGE_LIMIT})`);
+        currentMessages = [...currentMessages, {
+          role: 'user',
+          content: PASSIVE_WAIT_NUDGE,
+        }];
+        rounds++;
+        continue;
+      }
       const isCodeGenStall = taskType === 'code-gen'
         && editedFilePaths.size === 0
         && !/```/.test(text || '');
