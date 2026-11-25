@@ -129,6 +129,14 @@ const SUB_MAX_LLM_CALLS = 3;
 const SUB_MAX_CHARS = 60000;
 const SUB_MAX_TOOL_CONTENT = 12000;
 const STUCK_EXPLORING_THRESHOLD = 10;
+// Reasoning-only rounds: some models (measured on GLM 5.3-flash via NVIDIA)
+// spend their WHOLE token budget on internal reasoning and end the turn with
+// no text and no tool calls. Their thinking budget scales with max_tokens and
+// cannot be lowered via API parameters, so the harness bounds the damage:
+// nudge the model to commit to an action instead of killing the run, capped
+// so a truly stuck model still terminates.
+const REASONING_CONTINUATION_LIMIT = 2;
+const REASONING_CONTINUATION_NUDGE = `[System: your previous turn was entirely internal reasoning and hit the token budget before producing any output. Do not re-derive. Decide now and act immediately: call a tool, or answer in at most 3 sentences.]`;
 // After the first round-32 nudge, keep re-nudging the model toward generation
 // at this cadence instead of ever stripping tools / force-stopping the run.
 const GENERATION_NUDGE_INTERVAL = 5;
@@ -906,6 +914,11 @@ export async function sendWithRetrieval({
   // subset. Any set_mode call clears this so the model can always reach the
   // full set; computeTools maps the name to the subset.
   let taskTypeFilter = null;
+  // Reasoning-continuation state: how many reasoning-only turns have been
+  // nudged this run, and whether the current round must skip result
+  // processing and jump straight to the next round.
+  let reasoningContinuations = 0;
+  let reasoningContinuationPending = false;
 
   resetEditTracker();
   // Mark the run active so the scene can highlight files as they're edited.
@@ -1211,6 +1224,18 @@ export async function sendWithRetrieval({
         lastSendError = sendErr;
 
         if (sendErr?.providerErrorType === 'ReasoningBudgetExceeded') {
+          if (reasoningContinuations < REASONING_CONTINUATION_LIMIT) {
+            reasoningContinuations++;
+            reasoningContinuationPending = true;
+            currentMessages = [...currentMessages, {
+              role: 'user',
+              content: REASONING_CONTINUATION_NUDGE,
+            }];
+            finalText = (finalText ? finalText + '\n\n' : '') +
+              `[Model over-thought its turn and hit the reasoning budget - nudging it to act now (${reasoningContinuations}/${REASONING_CONTINUATION_LIMIT})...]`;
+            console.warn(`[ToolRound] Reasoning budget exhausted for ${sendErr.provider}; nudging it to act (${reasoningContinuations}/${REASONING_CONTINUATION_LIMIT})`);
+            break;
+          }
           finalText = (finalText ? finalText + '\n\n' : '') +
             `[${sendErr.message} The model produced reasoning only and no answer. Retry with a shorter prompt, a different model, or a provider with a smaller reasoning budget.]`;
           console.warn(`[ToolRound] Reasoning budget exhausted for ${sendErr.provider}; stopping run`);
@@ -1267,6 +1292,15 @@ export async function sendWithRetrieval({
         }
       }
     }
+    // A reasoning-only turn was nudged: skip result processing (there is no
+    // rawResult to process) and jump straight into the next round, which
+    // carries the continuation nudge in its context.
+    if (reasoningContinuationPending) {
+      reasoningContinuationPending = false;
+      rounds++;
+      continue;
+    }
+
     if (sendFailed) {
       if (sendFailedDailyCap) {
         finalText = (finalText ? finalText + '\n\n' : '') +

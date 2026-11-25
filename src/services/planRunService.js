@@ -293,7 +293,13 @@ async function releaseClaim(handle, reason) {
     });
     if (released?.task) applyPlanTask(released.task);
   } catch (err) {
-    console.warn('[PlanRun] Failed to release task claim:', err.message);
+    // A 409 means the claim expired during a long round - nothing left to
+    // release, so this is expected fallout of a slow turn, not an error.
+    if (/409|no longer active/i.test(err?.message || '')) {
+      console.log('[PlanRun] Task claim already expired - nothing to release');
+    } else {
+      console.warn('[PlanRun] Failed to release task claim:', err.message);
+    }
   }
 }
 
