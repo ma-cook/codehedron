@@ -48,12 +48,17 @@ export class ContentStore {
         // model repairs polluted text), the ID scheme is normalized so the
         // bleed mechanism is gone, and the keyword index is rebuilt.
         let healed = 0;
+        const healedSync = [];
         for (const [id, entry] of this.entries) {
           const prefix = `${id}:chunk-`;
           const conforming = Array.isArray(entry.chunks)
             && entry.chunks.length > 0
             && entry.chunks.every((c) => typeof c.id === 'string' && c.id.startsWith(prefix));
           if (conforming) continue;
+          // Collect the old (non-conforming) chunk ids: base64Store's chunk
+          // map may hold them from the persisted pre-heal store and must be
+          // cleaned once the healed chunks are in place.
+          const oldChunkIds = Array.isArray(entry.chunks) ? entry.chunks.map((c) => c.id) : [];
           const config = CHUNK_CONFIGS[entry.category] || { chunkSize: 2000, overlap: 200 };
           const content = joinChunks(entry.chunks);
           entry.chunks = content.length > MAX_INDEXED_FILE_CHARS
@@ -67,6 +72,7 @@ export class ContentStore {
                 oversized: true,
               }]
             : chunkText(content, { ...config, idPrefix: id });
+          healedSync.push({ oldChunkIds, entry });
           this._dirtyIds.add(id);
           healed++;
         }
@@ -84,6 +90,28 @@ export class ContentStore {
             }
           }
           this._persist();
+          // Sync base64Store's chunk map: it may have been hydrated from the
+          // persisted (pre-heal) chunk store, whose ids no longer match the
+          // healed entry — lookups would miss and fall into the linear scan
+          // for every read/edit.
+          for (const { oldChunkIds, entry } of healedSync) {
+            for (const oldId of oldChunkIds) this.encodedChunks.delete(oldId);
+            for (const chunk of entry.chunks) {
+              this.encodedChunks.set(chunk.id, {
+                text: chunk.text,
+                meta: {
+                  entryId: entry.id,
+                  sourcePath: entry.sourcePath,
+                  category: entry.category,
+                  keywords: chunk.keywords,
+                  charCount: chunk.charCount,
+                  byteSize: chunk.text.length,
+                  startIndex: chunk.startIndex,
+                  endIndex: chunk.endIndex,
+                },
+              });
+            }
+          }
           console.warn(`[ContentStore] Healed ${healed} pre-fix entries with non-conforming chunk IDs (keyword index rebuilt)`);
         }
         console.log(`[ContentStore] Hydrated from IndexedDB: ${this.entries.size} entries, ${this.totalChunks} chunks`);

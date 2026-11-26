@@ -1678,12 +1678,47 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         return content;
       };
       let matchContent = loadContent();
+      console.log(`[Edit] ${filePath}: loaded ${matchContent.length} chars (${entry.chunks.length} chunks)`);
+
+      // Content-bleed guard: the joined content should be the file itself. A
+      // multi-hundred-KB join for a file the model read as tens of lines means
+      // the store entry is polluted (pre-fix chunk bleed) — scans against it
+      // are where the app froze. Refresh from GitHub if possible, otherwise
+      // fail fast with guidance instead of scanning corrupt content.
+      if (matchContent.length > 1_000_000) {
+        console.error(`[Edit] ${filePath}: abnormal joined content size ${matchContent.length} chars (content-bleed signature)`);
+        if (githubContext) {
+          try {
+            const fresh = await withTimeout(
+              fetchFileContent(githubContext.owner, githubContext.repo, filePath, githubContext.token, repoRefOf(githubContext)),
+              TOOL_TIMEOUT_MS,
+              `edit-bleed-refresh(${filePath})`,
+            );
+            if (fresh) {
+              await persistFileContent(storeId, filePath, fresh);
+              entry = store.getEntry(storeId);
+              matchContent = loadContent();
+              console.warn(`[Edit] ${filePath}: re-fetched from GitHub after content-bleed signature (${matchContent.length} chars)`);
+            }
+          } catch (err) {
+            console.warn(`[Edit] bleed-refresh failed for ${filePath}: ${err.message}`);
+          }
+        }
+        if (matchContent.length > 1_000_000) {
+          return {
+            success: false,
+            content: `edit failed: ${filePath}'s stored content is abnormally large (${Math.round(matchContent.length / 1000)}k chars — store corruption signature). Call read_file("${filePath}") to see the current stored text, then re-try with a targeted oldString; re-scanning the repository will also rebuild the store.`,
+          };
+        }
+      }
 
       const wholeFileRefusal = refuseWholeFileEdit(matchContent, cleanedOldString, filePath);
       if (wholeFileRefusal) return wholeFileRefusal;
 
       const attemptEdit = async (content) => {
+        console.log(`[Edit] ${filePath}: matching ${cleanedOldString.length}-char oldString...`);
         const match = await findMatch(content, cleanedOldString, { filePath });
+        console.log(`[Edit] ${filePath}: match stage done (${match ? (match.timeout ? 'timeout' : match.ambiguous ? `ambiguous x${match.ambiguous.length}` : `via ${match.strategy}`) : 'no match'})`);
         if (!match) return { match: null };
         if (match.timeout) return { timeout: true };
         if (match.ambiguous) return { ambiguous: match };
@@ -1785,7 +1820,9 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       } else {
         appliedEditRecords.push({ filePath, oldString: cleanedOldString, newString });
       }
+      console.log(`[Edit] ${filePath}: persisting ${updated.length} chars...`);
       await persistFileContent(storeId, filePath, updated);
+      console.log(`[Edit] ${filePath}: persisted (round-trip integrity check ran)`);
 
       const oldLines = cleanedOldString.split('\n');
       const newLines = newString.split('\n');
