@@ -1029,8 +1029,18 @@ export async function sendWithRetrieval({
       const rl = getProviderRateLimitState(providerId);
       const WINDOW_RESERVE = 2;
       const windowNearlyFull = rl.usedInWindow >= rl.maxPerWindow - WINDOW_RESERVE;
-      if (rl.cooldownRemainingMs > 0 || windowNearlyFull) {
-        console.warn(`[Compression] Skipping LLM summarization for ${providerId} — ${rl.cooldownRemainingMs > 0 ? `rate limit cooldown active (${Math.round(rl.cooldownRemainingMs / 1000)}s)` : `rate window nearly full (${rl.usedInWindow}/${rl.maxPerWindow})`}`);
+      // Also yield when the provider is at its in-flight cap: queueing a hidden
+      // summarizer behind the main round hogged slots for minutes (the
+      // helper inherits the run's reasoning effort) and spammed the
+      // concurrency log. Compression degrades to the local pass instead.
+      const atCap = rl.inFlight >= rl.maxInFlight;
+      if (rl.cooldownRemainingMs > 0 || windowNearlyFull || atCap) {
+        const why = rl.cooldownRemainingMs > 0
+          ? `rate limit cooldown active (${Math.round(rl.cooldownRemainingMs / 1000)}s)`
+          : windowNearlyFull
+            ? `rate window nearly full (${rl.usedInWindow}/${rl.maxPerWindow})`
+            : `provider at its in-flight cap (${rl.inFlight}/${rl.maxInFlight}) - the main round keeps its slots`;
+        console.warn(`[Compression] Skipping LLM summarization for ${providerId} - ${why}`);
         return null;
       }
     }
@@ -1038,9 +1048,13 @@ export async function sendWithRetrieval({
     const prompt = `Summarize what the assistant learned or accomplished in 1 sentence (max 50 words):\n\nAssistant: ${(assistantMsg.content || '(no text)').slice(0, 300)}\n\nTool results:\n${toolSnippets.slice(0, 2500)}`;
     try {
       // Bound the hidden summarizer call so a stalled provider can't freeze the
-      // whole tool round — compression should degrade gracefully, not hang.
+      // whole tool round - compression should degrade gracefully, not hang.
+      // The timeout ABORTS the underlying request: an abandoned-but-still-
+      // streaming summarizer otherwise keeps its concurrency slot for minutes
+      // after the race gave up on it.
       const SUMMARIZER_TIMEOUT_MS = 8_000;
       let timer;
+      const summarizeAbort = new AbortController();
       const result = await Promise.race([
         sendToZen({
           messages: [
@@ -1048,11 +1062,16 @@ export async function sendWithRetrieval({
             { role: 'user', content: prompt },
           ],
           tools: [],
-          signal: null,
-          llmConfig,
+          signal: summarizeAbort.signal,
+          // Mechanical 1-sentence summaries do not need the user's Reason
+          // setting - max effort here burned slots and quota for no gain.
+          llmConfig: { ...llmConfig, reasoningEffort: 'low' },
         }),
         new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('summary timed out after 25s')), SUMMARIZER_TIMEOUT_MS);
+          timer = setTimeout(() => {
+            summarizeAbort.abort(new Error('summary timed out after 8s'));
+            reject(new Error('summary timed out after 8s'));
+          }, SUMMARIZER_TIMEOUT_MS);
         }),
       ]).finally(() => clearTimeout(timer));
       const summary = (typeof result === 'string' ? result : result?.text || '').trim().slice(0, 400);

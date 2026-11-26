@@ -617,13 +617,23 @@ export function getProviderRateLimitState(providerId) {
 }
 
 async function acquireInFlightSlot(providerId, signal) {
+  // Log the wait ONCE (not per 200ms poll) — per-poll logging produced
+  // hundreds of identical console lines during slot contention.
+  let waitLogged = false;
+  const waitStarted = Date.now();
   for (;;) {
     const current = inFlightByProvider.get(providerId) || 0;
     if (current < MAX_IN_FLIGHT_PER_PROVIDER) {
       inFlightByProvider.set(providerId, current + 1);
+      if (waitLogged) {
+        console.log(`[Concurrency] ${providerId} slot acquired after ${((Date.now() - waitStarted) / 1000).toFixed(1)}s`);
+      }
       return;
     }
-    console.warn(`[Concurrency] ${providerId} at cap (${MAX_IN_FLIGHT_PER_PROVIDER} in-flight) — waiting for a slot (same=${current})`);
+    if (!waitLogged) {
+      console.warn(`[Concurrency] ${providerId} at cap (${current} in-flight) — queued, waiting for a slot`);
+      waitLogged = true;
+    }
     await sleepAbortable(200, signal);
   }
 }

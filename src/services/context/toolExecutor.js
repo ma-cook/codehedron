@@ -1,7 +1,7 @@
 import { getContentStore, ContentCategory, waitForContentStoreHydration } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
-import { extractKeywords, chunkTextWithYield, MAX_INDEXED_FILE_CHARS, joinChunks } from './chunkIndex';
+import { chunkTextWithYield, MAX_INDEXED_FILE_CHARS, joinChunks } from './chunkIndex';
 import { getContentStoreWorker, getContentStoreWorkerHealth } from '../../workers/contentStoreWorkerClient';
 import useObjectsStore from '../../stores/objectsStore';
 import useCodeStore from '../../stores/codeStore';
@@ -1819,34 +1819,47 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         };
       }
       if (!existingFile) {
-        const parentDir = filePath.split('/').slice(0, -1).join('/');
-        const parentExists = parentDir && fileTree.some(f => f.startsWith(parentDir + '/') || f === parentDir);
-        if (!parentExists && fileTree.length > 0) {
-          return { success: false, content: `Cannot create "${filePath}": parent directory does not exist in the repository. Use list_files to find the correct location, or check the FILE TREE section for valid paths.` };
+        // Anti-hallucination guard, relaxed to the repo ROOT: new
+        // subdirectories under a known root are legitimate greenfield work
+        // (there is no mkdir tool — measured: the model fell back to
+        // delivering text blocks for files in new directories, which lands
+        // them outside the editable store). A fabricated root directory is
+        // still rejected.
+        const rootSegment = filePath.split('/')[0];
+        const rootKnown = fileTree.length === 0 || fileTree.some((f) => f.split('/')[0] === rootSegment);
+        if (!rootKnown) {
+          return {
+            success: false,
+            content: `Cannot create "${filePath}": its root directory "${rootSegment}/" does not exist in the repository. Use list_files to check the real tree, or edit existing files instead of inventing paths.`,
+          };
         }
       }
       await persistFileContent(storeId, filePath, content);
 
-      const oversized = content.length > MAX_INDEXED_FILE_CHARS;
-      const kw = oversized ? [] : extractKeywords(content);
-      const chunkId = `${storeId}:chunk-write-${Date.now()}`;
-      const newEntry = {
-        id: storeId,
-        category: ContentCategory.REPO_FILE,
-        chunks: [{ id: chunkId, text: content, startIndex: 0, endIndex: content.length, keywords: kw, charCount: content.length, oversized }],
-        sourcePath: filePath,
-        tags: [],
-        lastUpdated: Date.now(),
-        totalChars: content.length,
-      };
-      store.entries.set(storeId, newEntry);
-      base64Store.encodedChunks.set(chunkId, {
-        text: content,
-        meta: { entryId: storeId, sourcePath: filePath, category: ContentCategory.REPO_FILE, keywords: kw, charCount: content.length, byteSize: content.length, startIndex: 0, endIndex: content.length },
-      });
+      // Register the new path in the cached repo tree so subsequent rounds'
+      // FILE TREE sees model-created files (previously they stayed invisible
+      // until a rescan, and the model had to re-discover them from the
+      // component index).
+      let newDirNote = '';
+      if (!existingFile) {
+        try {
+          const cs = useCodeStore.getState();
+          const tree = Array.isArray(cs.repoFileTree) ? cs.repoFileTree : [];
+          if (!tree.includes(filePath)) {
+            cs.setRepoContext(
+              [...tree, filePath],
+              { ...(cs.repoFileContents || {}), [filePath]: content },
+            );
+            const parentDir = filePath.split('/').slice(0, -1).join('/');
+            if (parentDir && !tree.some((f) => f.startsWith(parentDir + '/'))) {
+              newDirNote = ` Created in new directory ${parentDir}/.`;
+            }
+          }
+        } catch { /* tree update is best-effort */ }
+      }
 
       console.log(`[Write] ${filePath}: wrote ${content.length} chars (persisted to store)`);
-      return { success: true, content: `Successfully wrote ${content.length} chars to ${filePath}` };
+      return { success: true, content: `Successfully wrote ${content.length} chars to ${filePath}.${newDirNote}` };
     }
 
     case 'ask_user': {

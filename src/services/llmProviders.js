@@ -513,11 +513,15 @@ export async function sendToProvider({
 
       const errText = await res.text().catch(() => '');
       // A 502 from our proxy means the upstream never returned headers within
-      // its timeout — for buffered reasoning models the generation may have
+      // its timeout - for buffered reasoning models the generation may have
       // simply needed more time. Say so instead of surfacing a bare 502.
+      // A 524 is Cloudflare's own ~100s wait-for-headers limit on the Worker
+      // route - the fallback route is tried automatically via the retry below.
       const message = res.status === 502
         ? `${provider.name} did not respond before the proxy timed out. The model may still be generating server-side — try a shorter prompt, a different model, or another provider.`
-        : `${provider.name} error ${res.status}: ${errText}`;
+        : res.status === 524
+          ? `${provider.name} took over 100s to start responding and Cloudflare's proxy gave up (524). The fallback route is being tried; NVIDIA is slow to start responding right now — retry, or switch model/provider.`
+          : `${provider.name} error ${res.status}: ${errText}`;
       const err = new Error(message);
       err.status = res.status;
       err.provider = provider.name;
