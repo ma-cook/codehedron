@@ -70,6 +70,7 @@ export function buildPlanRunPrompt(plan, task, remainingTasks = []) {
     'Instructions:',
     '- Work only on the current task. Do not start the remaining tasks.',
     '- Do not call create_plan or add_task. Use the existing plan.',
+    '- Work incrementally: implement ONE file (or one coherent change) per turn, then continue with the next in the following turn.',
     `- When the current task is fully implemented, call complete_task("${task.id}").`,
   ];
 
@@ -93,9 +94,10 @@ export function buildOrchestratedPlanRunPrompt(plan, task) {
     'Instructions:',
     '- Work only on the current task. Do not start or describe other plan tasks.',
     '- Do not call create_plan, add_task, complete_task, or any plan editing tool.',
+    '- Work incrementally: implement ONE file (or one coherent change) per turn - as soon as its design is settled, call write/edit for it, then move on to the next file in the following turn. Keep each turn\'s internal reasoning scoped to the file you are currently working on; do not plan the entire implementation in a single turn.',
     '- Read the relevant files before editing. Use the edit tool with exact current text.',
-    '- Produce the complete, final content for every file you create or change.',
     '- Do not create a branch, commit, push, or open a pull request. The runner handles delivery.',
     '- Do not output SEARCH/REPLACE markers in the final file content.',
+    '- Do not end the run until every file of the task is written and a final summary is given.',
   ].join('\n');
 }

@@ -563,6 +563,12 @@ export async function sendToProvider({
   let finishReason = null;
   let reasoningSeen = false;
   let reasoningChunks = 0;
+  // The streamed reasoning text is kept (instead of only counted) so a
+  // reasoning-only budget death can hand the continuation nudge a digest of
+  // what the model was already deliberating - it resumes instead of
+  // re-deriving from zero.
+  let reasoningChars = 0;
+  let reasoningText = '';
   let contentSeen = false;
   let toolStatusEmitted = false;
   const toolCallsMap = new Map();
@@ -607,12 +613,17 @@ export async function sendToProvider({
           }
           if (result.type === 'reasoning') {
             reasoningChunks++;
+            reasoningText += result.text || '';
+            reasoningChars += (result.text || '').length;
             if (!reasoningSeen) {
               reasoningSeen = true;
               markFirstToken();
               emitStatus('Thinking…');
             } else if (reasoningChunks % 12 === 0) {
-              emitStatus(`Thinking… (${reasoningChunks} chunks)`);
+              // Token estimate (chars / ~3.5) reads better than raw chunk
+              // counts: chunks are SSE lines carrying 1-3 tokens each, and the
+              // estimate shows the reasoning budget actually being consumed.
+              emitStatus(`Thinking… (~${Math.round(reasoningChars / 3.5).toLocaleString('en-US')} tokens)`);
             }
           } else if (result.type === 'text') {
             if (!contentSeen) {
@@ -682,6 +693,13 @@ export async function sendToProvider({
     const err = new Error(`${provider.name} spent its response budget on reasoning without returning an answer. Try a shorter prompt or a different model.`);
     err.providerErrorType = 'ReasoningBudgetExceeded';
     err.provider = provider.name;
+    // Reasoning digest: the orchestrator's continuation nudge embeds this so
+    // the next round resumes from where the thinking left off instead of
+    // re-deriving everything from zero.
+    err.reasoningLength = reasoningText.length;
+    err.reasoningDigest = reasoningText.length > 0
+      ? `${reasoningText.slice(0, 300)}\n[...]\n${reasoningText.slice(-300)}`
+      : '';
     throw err;
   }
 

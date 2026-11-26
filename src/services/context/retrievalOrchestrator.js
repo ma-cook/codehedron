@@ -1244,9 +1244,14 @@ export async function sendWithRetrieval({
             const nudgeText = reasoningContinuations >= REASONING_CONTINUATION_LIMIT
               ? REASONING_CONTINUATION_FINAL_NUDGE
               : REASONING_CONTINUATION_NUDGE;
+            // A digest of the model's own reasoning trace lets the next round
+            // resume its deliberation instead of re-deriving from zero.
+            const digest = typeof sendErr.reasoningDigest === 'string' && sendErr.reasoningDigest.trim().length > 0
+              ? `\n[Your previous reasoning trace (excerpt): ${sendErr.reasoningDigest}\nContinue from where it left off - do not re-derive.]`
+              : '';
             currentMessages = [...currentMessages, {
               role: 'user',
-              content: nudgeText,
+              content: `${nudgeText}${digest}`,
             }];
             finalText = (finalText ? finalText + '\n\n' : '') +
               `[Model over-thought its turn and hit the reasoning budget - nudging it to act now (${reasoningContinuations}/${REASONING_CONTINUATION_LIMIT})...]`;
