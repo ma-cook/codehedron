@@ -558,6 +558,21 @@ export async function sendToProvider({
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let fullText = '';
+  // Batch UI emissions: onChunk drives consumer state updates plus the
+  // orchestrator's marker-stripping over the accumulated text — invoking it
+  // per streamed delta on big rounds was quadratic and ground the UI down
+  // (measured during large "Calling tools" turns). Throttled to ~30fps with a
+  // guaranteed final flush; consumers read fullText, never the delta.
+  let lastStreamEmit = 0;
+  let pendingStreamEmit = false;
+  const flushStreamEmit = (force = false) => {
+    if (!pendingStreamEmit) return;
+    const now = Date.now();
+    if (!force && now - lastStreamEmit < 33) return;
+    lastStreamEmit = now;
+    pendingStreamEmit = false;
+    onChunk?.('', fullText);
+  };
   let buffer = '';
   let streamDone = false;
   let finishReason = null;
@@ -580,6 +595,8 @@ export async function sendToProvider({
   };
   const emitStatus = (text) => {
     console.log(`[sendToProvider] ${provider.name}: ${text} (${Date.now() - requestStartedAt}ms)`);
+    pendingStreamEmit = false;
+    lastStreamEmit = Date.now();
     onChunk?.('', contentSeen ? `${fullText}\n\n${text}` : text);
   };
   const markFirstToken = () => {
@@ -632,7 +649,8 @@ export async function sendToProvider({
               console.log(`[sendToProvider] ${provider.name} first content chunk after ${Date.now() - requestStartedAt}ms`);
             }
             fullText += result.text;
-            onChunk?.(result.text, fullText);
+            pendingStreamEmit = true;
+            flushStreamEmit();
           } else if (result.type === 'tool_calls') {
             if (!toolStatusEmitted) {
               toolStatusEmitted = true;
@@ -656,7 +674,8 @@ export async function sendToProvider({
               console.log(`[sendToProvider] ${provider.name} first content chunk after ${Date.now() - requestStartedAt}ms`);
             }
             fullText += result;
-            onChunk?.(result, fullText);
+            pendingStreamEmit = true;
+            flushStreamEmit();
           }
         }
         if (streamDone) break;
@@ -666,6 +685,11 @@ export async function sendToProvider({
     clearWaitingTicker();
     clearTimeout(streamWatchdogId);
   }
+
+  // Final flush: guarantee the consumer received the complete streamed text,
+  // including on error exits (reasoning-only budget death keeps its partial
+  // state visible in the chat).
+  flushStreamEmit(true);
 
   // Integrity probe (model-output corruption diagnosis): for file-writing
   // calls, log the streamed argument size plus head/tail. If corruption is

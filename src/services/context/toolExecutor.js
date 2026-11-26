@@ -298,6 +298,11 @@ async function persistFileContent(storeId, filePath, content) {
     }
 }
 
+// Cooperative yield for the main-thread matchers: lets the browser paint
+// between scan slices so the 2.5s fuzzy-match budget never reads as a dead
+// app. Strategies check elapsed time every iteration and yield every ~15ms.
+const matchYield = () => new Promise((r) => setTimeout(r, 0));
+
 function levenshteinDistance(a, b) {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
@@ -319,12 +324,17 @@ function levenshteinDistance(a, b) {
   return matrix[a.length][b.length];
 }
 
-function lineTrimmedMatch(content, oldString, deadline = Infinity) {
+async function lineTrimmedMatch(content, oldString, deadline = Infinity) {
   const contentLines = content.split('\n');
   const searchLines = oldString.split('\n').filter(l => l !== '');
   if (searchLines.length === 0) return null;
+  let lastYield = Date.now();
   for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
-    if ((i & 63) === 0 && Date.now() > deadline) return null;
+    if (Date.now() - lastYield > 15) {
+      await matchYield();
+      lastYield = Date.now();
+      if (Date.now() > deadline) return null;
+    }
     let matches = true;
     for (let j = 0; j < searchLines.length; j++) {
       if (contentLines[i + j].trim() !== searchLines[j].trim()) { matches = false; break; }
@@ -338,13 +348,14 @@ function lineTrimmedMatch(content, oldString, deadline = Infinity) {
   return null;
 }
 
-function blockAnchorMatch(content, oldString, deadline = Infinity) {
+async function blockAnchorMatch(content, oldString, deadline = Infinity) {
   const searchLines = oldString.split('\n').filter(l => l !== '');
   if (searchLines.length < 3) return null;
   const firstLine = searchLines[0].trim();
   const lastLine = searchLines[searchLines.length - 1].trim();
   const contentLines = content.split('\n');
   const n = contentLines.length;
+  let lastYield = Date.now();
   // Tight span tolerance: a valid fuzzy match may extend at most 2 lines past
   // the oldString's own length. The old 25%+1 allowance let a near-duplicate
   // block elsewhere in the file match a span that included extra content.
@@ -362,7 +373,11 @@ function blockAnchorMatch(content, oldString, deadline = Infinity) {
   // while running in O(n) for the enumeration.
   const lastPositions = [];
   for (let i = 0; i < n; i++) {
-    if ((i & 63) === 0 && Date.now() > deadline) return null;
+    if (Date.now() - lastYield > 15) {
+      await matchYield();
+      lastYield = Date.now();
+      if (Date.now() > deadline) return null;
+    }
     if (contentLines[i].trim() === lastLine) lastPositions.push(i);
   }
   if (lastPositions.length === 0) return null;
@@ -370,7 +385,11 @@ function blockAnchorMatch(content, oldString, deadline = Infinity) {
   const candidates = [];
   let p = 0;
   for (let i = 0; i < n; i++) {
-    if ((i & 63) === 0 && Date.now() > deadline) return null;
+    if (Date.now() - lastYield > 15) {
+      await matchYield();
+      lastYield = Date.now();
+      if (Date.now() > deadline) return null;
+    }
     if (contentLines[i].trim() !== firstLine) continue;
     const jMin = Math.max(i + 2, i + jMinBase);
     const jMax = i + jMaxBase;
@@ -385,7 +404,11 @@ function blockAnchorMatch(content, oldString, deadline = Infinity) {
   // each block's line-by-line scoring is the expensive part of this strategy.
   const scored = candidates.slice(0, 100);
   for (const c of scored) {
-    if (Date.now() > deadline) return null;
+    if (Date.now() - lastYield > 15) {
+      await matchYield();
+      lastYield = Date.now();
+      if (Date.now() > deadline) return null;
+    }
     let score = 0, count = 0;
     const maxK = Math.min(searchLines.length - 1, c.endLine - c.startLine);
     for (let k = 1; k < maxK; k++) {
@@ -417,13 +440,18 @@ function blockAnchorMatch(content, oldString, deadline = Infinity) {
   return { index: start, length: end - start };
 }
 
-function whitespaceNormalizedMatch(content, oldString, deadline = Infinity) {
+async function whitespaceNormalizedMatch(content, oldString, deadline = Infinity) {
   const normalize = (s) => s.replace(/\s+/g, ' ').trim();
   const normOld = normalize(oldString);
   const contentLines = content.split('\n');
   const oldLines = oldString.split('\n');
+  let lastYield = Date.now();
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
-    if ((i & 31) === 0 && Date.now() > deadline) return null;
+    if (Date.now() - lastYield > 15) {
+      await matchYield();
+      lastYield = Date.now();
+      if (Date.now() > deadline) return null;
+    }
     const block = contentLines.slice(i, i + oldLines.length).join('\n');
     if (normalize(block) === normOld) {
       const start = contentLines.slice(0, i).join('\n').length + (i > 0 ? 1 : 0);
@@ -434,7 +462,7 @@ function whitespaceNormalizedMatch(content, oldString, deadline = Infinity) {
   return null;
 }
 
-function indentationFlexibleMatch(content, oldString, deadline = Infinity) {
+async function indentationFlexibleMatch(content, oldString, deadline = Infinity) {
   const stripIndent = (s) => {
     const lines = s.split('\n');
     const nonEmpty = lines.filter(l => l.trim().length > 0);
@@ -445,8 +473,13 @@ function indentationFlexibleMatch(content, oldString, deadline = Infinity) {
   const normOld = stripIndent(oldString);
   const contentLines = content.split('\n');
   const oldLines = oldString.split('\n');
+  let lastYield = Date.now();
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
-    if ((i & 31) === 0 && Date.now() > deadline) return null;
+    if (Date.now() - lastYield > 15) {
+      await matchYield();
+      lastYield = Date.now();
+      if (Date.now() > deadline) return null;
+    }
     const block = contentLines.slice(i, i + oldLines.length).join('\n');
     if (stripIndent(block) === normOld) {
       const start = contentLines.slice(0, i).join('\n').length + (i > 0 ? 1 : 0);
@@ -588,7 +621,7 @@ async function findMatch(content, oldString, { filePath } = {}) {
   ];
   let timedOut = false;
   for (const strategy of strategies) {
-    const result = strategy.fn(content, oldString, deadline);
+    const result = await strategy.fn(content, oldString, deadline);
     if (result) {
       console.log(`[Edit] Matched via ${strategy.name} strategy (index ${result.index}, length ${result.length})`);
       return { index: result.index, length: result.length, strategy: strategy.name };
