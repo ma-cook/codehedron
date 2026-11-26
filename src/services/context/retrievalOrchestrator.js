@@ -956,6 +956,14 @@ export async function sendWithRetrieval({
         originalFileContents.set(p, c);
         originalFileSource.set(p, { source: 'github', lastUpdated: null });
       }
+      // Mirror the fresh copies into the codeStore cache. The push/apply pass
+      // reads repoFileContents, and a stale cache (fetched at an older commit)
+      // makes it diff a patch against a different snapshot than the one the
+      // harness edited - valid hunks get rejected with "SEARCH did not match".
+      if (refreshed.size > 0) {
+        const cs = useCodeStore.getState();
+        cs.setRepoFileContents({ ...(cs.repoFileContents || {}), ...Object.fromEntries(refreshed) });
+      }
     } catch (err) {
       console.warn(`[ToolRound] F1 refresh failed (continuing with stored copies):`, err.message);
     }

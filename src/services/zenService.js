@@ -251,6 +251,7 @@ import { getAllPlanContext } from './planService';
 import { getRepoTree } from './githubIssuesService';
 import { fetchFileContent } from './githubRepoService';
 import { getContentStore, ContentCategory, waitForContentStoreHydration } from './context/contentStore';
+import { joinChunks } from './context/chunkIndex';
 import { getBase64Store } from './context/base64Store';
 import { buildContext } from './context/contextBuilder';
 import useObjectsStore from '../stores/objectsStore';
@@ -460,6 +461,19 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
     }
   }
 
+  // When the caller doesn't supply the diagram markdown (plan/code chat
+  // repopulation, post-merge repo refresh), re-index the existing entry so
+  // chats keep their merfolk diagram context without waiting for a full scan.
+  let effectiveDiagramMarkdown = diagramMarkdown || null;
+  if (!effectiveDiagramMarkdown) {
+    try {
+      const existingDiagram = store.getEntry('merfolk:diagram');
+      if (existingDiagram) {
+        effectiveDiagramMarkdown = joinChunks(existingDiagram.chunks);
+      }
+    } catch { /* store unavailable - nothing to preserve */ }
+  }
+
   const BATCH_SIZE = 25;
   for (let i = 0; i < repoEntries.length; i += BATCH_SIZE) {
     const slice = Object.fromEntries(repoEntries.slice(i, i + BATCH_SIZE));
@@ -467,7 +481,7 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
     if (i === 0) {
       batch.objects = sceneObjects;
       batch.planContext = planContext || '';
-      batch.diagramMarkdown = diagramMarkdown || null;
+      batch.diagramMarkdown = effectiveDiagramMarkdown || null;
     }
     const result = await workerCall(`processContentBatch[${i / BATCH_SIZE}]`, worker.processContentBatch(batch));
     if (result.entries?.length) {
@@ -475,13 +489,13 @@ async function populateContentStoreWorkerInner(repoFileContents, diagramMarkdown
     }
   }
 
-  // No repo files (e.g. plan send, rescan, runtime scan) — still index the
+  // No repo files (e.g. plan send, rescan, runtime scan) - still index the
   // scene objects, plan and diagram markdown.
   if (repoEntries.length === 0) {
     const result = await workerCall('processContentBatch[empty]', worker.processContentBatch({
       objects: sceneObjects,
       planContext: planContext || '',
-      diagramMarkdown: diagramMarkdown || null,
+      diagramMarkdown: effectiveDiagramMarkdown || null,
     }));
     if (result.entries?.length) {
       getContentStore().mergeBulk(result.entries);

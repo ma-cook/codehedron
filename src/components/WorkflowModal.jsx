@@ -1,8 +1,16 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import useWorkflowStore from '../stores/workflowStore';
 import useSpaceManagerStore from '../stores/spaceManagerStore';
 import usePlanStore from '../stores/planStore';
-import { getTickets, subscribeToTickets } from '../services/workflowService';
+import useAuthStore from '../stores/authStore';
+import useCodeStore from '../stores/codeStore';
+import {
+  getTickets,
+  subscribeToTickets,
+  acceptTicket,
+  emitTicketAccepted,
+} from '../services/workflowService';
+import { approveAndMergePlanPullRequest } from '../services/planPullRequestService';
 import WorkflowTicketRow from './WorkflowTicketRow';
 import './WorkflowModal.css';
 
@@ -14,6 +22,44 @@ const TABS = [
   { key: 'merged', label: 'Merged' },
   { key: 'rejected', label: 'Rejected' },
 ];
+
+function isReviewTicket(ticket, spaceId, inFlight) {
+  return ticket?.status === 'to_review' && ticket.spaceId === spaceId && !inFlight.has(ticket.id);
+}
+
+async function acceptAndMergeTicket(ticket, context) {
+  const accepted = await acceptTicket(ticket.id);
+  context.updateTicket(accepted);
+  emitTicketAccepted(ticket.id, context.currentUserId);
+
+  if (!ticket.planTaskId && Array.isArray(ticket.diffs) && ticket.diffs.length > 0) {
+    const pendingChanges = ticket.diffs.map((d) => ({
+      filePath: d.filePath,
+      original: d.original,
+      proposed: d.proposed,
+      fullContent: true,
+      isWholeFileProposal: false,
+      action: d.action || 'modify',
+      request: `Accepted from workflow ticket by ${ticket.userName}`,
+    }));
+    useCodeStore.getState().addPendingChanges(pendingChanges);
+  }
+
+  if (!ticket.planTaskId || !accepted.githubPrNumber) return accepted;
+  if (!context.isEnabled()) return accepted;
+
+  const owner = context.repoOwner || context.selectedRepo?.owner?.login || null;
+  const repo = context.repoName || context.selectedRepo?.name || null;
+  if (!owner || !repo) throw new Error('Repository coordinates are unavailable for this ticket');
+
+  const result = await approveAndMergePlanPullRequest({ owner, repo, ticket: accepted });
+  if (!result.ok) throw new Error(result.error || 'Merge is blocked');
+
+  const { planTask, ...updatedTicket } = result.ticket || {};
+  context.updateTicket(updatedTicket);
+  if (planTask?.id) usePlanStore.getState()._applyTaskUpdate(planTask);
+  return accepted;
+}
 
 export default function WorkflowModal() {
   const isOpen = useWorkflowStore((s) => s.isModalOpen);
@@ -27,8 +73,20 @@ export default function WorkflowModal() {
   const setIsLoading = useWorkflowStore((s) => s.setIsLoading);
   const spaceId = useSpaceManagerStore((s) => s.currentSpaceId);
   const refreshPlan = usePlanStore((s) => s.refreshPlan);
+  const autoAcceptEnabled = useWorkflowStore((s) => s.autoAcceptEnabled);
+  const toggleAutoAccept = useWorkflowStore((s) => s.toggleAutoAccept);
+  const setAutoAcceptEnabled = useWorkflowStore((s) => s.setAutoAcceptEnabled);
+  const currentUserId = useAuthStore((s) => s.user?.uid || s.user?.sub);
+  const repoOwner = useCodeStore((s) => s.repoOwner);
+  const repoName = useCodeStore((s) => s.repoName);
+  const selectedRepo = useCodeStore((s) => s.selectedRepo);
 
   const [activeTab, setActiveTab] = useState(null);
+  const [autoAcceptTick, setAutoAcceptTick] = useState(0);
+  const autoAcceptEnabledRef = useRef(autoAcceptEnabled);
+  const autoAcceptLoopRef = useRef(false);
+  const autoAcceptInFlightRef = useRef(new Set());
+  autoAcceptEnabledRef.current = autoAcceptEnabled;
 
   useEffect(() => {
     if (!isOpen || !spaceId) return;
@@ -68,6 +126,60 @@ export default function WorkflowModal() {
     return unsub;
   }, [spaceId, addTicket, updateTicket, removeTicket, refreshPlan]);
 
+  useEffect(() => {
+    if (!autoAcceptEnabled || !spaceId || isLoading || autoAcceptLoopRef.current) return;
+
+    const inFlight = autoAcceptInFlightRef.current;
+    autoAcceptLoopRef.current = true;
+
+    (async () => {
+      try {
+        while (autoAcceptEnabledRef.current) {
+          const next = useWorkflowStore.getState().tickets.find((t) => isReviewTicket(t, spaceId, inFlight));
+          if (!next) break;
+          inFlight.add(next.id);
+          try {
+            await acceptAndMergeTicket(next, {
+              currentUserId,
+              updateTicket,
+              repoOwner,
+              repoName,
+              selectedRepo,
+              isEnabled: () => autoAcceptEnabledRef.current,
+            });
+          } catch (err) {
+            console.warn('[WorkflowModal] Auto-accept failed:', err.message);
+            setAutoAcceptEnabled(false);
+            break;
+          } finally {
+            inFlight.delete(next.id);
+          }
+        }
+      } finally {
+        autoAcceptLoopRef.current = false;
+      }
+
+      if (
+        autoAcceptEnabledRef.current &&
+        useWorkflowStore.getState().tickets.some((t) => isReviewTicket(t, spaceId, inFlight))
+      ) {
+        setAutoAcceptTick((tick) => tick + 1);
+      }
+    })();
+  }, [
+    autoAcceptEnabled,
+    autoAcceptTick,
+    tickets,
+    isLoading,
+    spaceId,
+    currentUserId,
+    updateTicket,
+    repoOwner,
+    repoName,
+    selectedRepo,
+    setAutoAcceptEnabled,
+  ]);
+
   const handleClose = useCallback(() => setModalOpen(false), [setModalOpen]);
 
   useEffect(() => {
@@ -86,6 +198,15 @@ export default function WorkflowModal() {
       <div className="workflow-panel-header">
         <h2 className="workflow-panel-title">Workflow</h2>
         <span className="workflow-panel-count">{tickets.length} ticket{tickets.length !== 1 ? 's' : ''}</span>
+        <button
+          type="button"
+          className={`workflow-panel-auto-accept ${autoAcceptEnabled ? 'active' : ''}`}
+          onClick={toggleAutoAccept}
+          aria-pressed={autoAcceptEnabled}
+          title={autoAcceptEnabled ? 'Turn off auto-accept' : 'Automatically accept and merge tickets in review'}
+        >
+          {autoAcceptEnabled ? 'Auto-accept on' : 'Auto-accept'}
+        </button>
         <button className="workflow-panel-close" onClick={handleClose} title="Close">
           {'\u2715'}
         </button>

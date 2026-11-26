@@ -41,8 +41,30 @@
   color: rgba(255, 255, 255, 0.4);
 }
 
-.workflow-panel-close {
+.workflow-panel-auto-accept {
   margin-left: auto;
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.workflow-panel-auto-accept:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+.workflow-panel-auto-accept.active {
+  background: rgba(122, 220, 126, 0.16);
+  border-color: rgba(122, 220, 126, 0.45);
+  color: #a8eca9;
+}
+
+.workflow-panel-close {
+  margin-left: 6px;
   background: none;
   border: none;
   color: rgba(255, 255, 255, 0.5);

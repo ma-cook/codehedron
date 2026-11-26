@@ -29,6 +29,7 @@ const useWorkflowStore = create((set, get) => ({
   selectedTicketId: null,
   isLoading: false,
   isModalOpen: false,
+  autoAcceptEnabled: false,
 
   setTickets: (tickets) => set({ tickets }),
 
@@ -56,6 +57,9 @@ const useWorkflowStore = create((set, get) => ({
 
   setModalOpen: (open) => set({ isModalOpen: open }),
   toggleModal: () => set((state) => ({ isModalOpen: !state.isModalOpen })),
+
+  setAutoAcceptEnabled: (enabled) => set({ autoAcceptEnabled: enabled }),
+  toggleAutoAccept: () => set((state) => ({ autoAcceptEnabled: !state.autoAcceptEnabled })),
 
   getTicketsByStatus: (status) => {
     const { tickets } = get();

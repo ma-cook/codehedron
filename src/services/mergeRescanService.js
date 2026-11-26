@@ -4,6 +4,7 @@ import { markdownDiagramService } from './markdownDiagramService';
 import { renderMerfolkMarkdownToScene } from './sceneRenderService';
 import { loadScanSession } from './scanJobSession';
 import { saveDiagramDigest } from './graphPersistence';
+import { loadSpaceMeta, saveSpaceMeta } from './context/contentStorePersistence';
 import { api } from '../api-client';
 import useObjectsStore from '../stores/objectsStore';
 import useCodeStore from '../stores/codeStore';
@@ -29,6 +30,11 @@ function makeCreateObject(spaceId) {
 // that space) and a runId (so one rescan can never clear another's progress).
 let rescanRunSeq = 0;
 const makeRescanRun = (spaceId) => `${spaceId}:${++rescanRunSeq}`;
+
+// Backend rejection for rescan jobs on spaces that were never server-scanned
+// (e.g. the diagram came from a plan chat). The error body is the api-client's
+// `${status}: ${body}` text.
+const NO_PREVIOUS_SCAN_RE = /No previous scan to increment against/i;
 
 function isActiveSpace(spaceId) {
   const { currentSpaceId } = useSpaceManagerStore.getState();
@@ -69,12 +75,28 @@ async function tryServerRescan(repoSlug, spaceId) {
   const runId = makeRescanRun(spaceId);
   try {
     publishRescanProgress(spaceId, runId, 1, 'Queuing server rescan...');
-    const job = await api.post('/api/scan-jobs', {
-      spaceId,
-      repoOwner: owner,
-      repoName: name,
-      rescan: true,
-    });
+    let job;
+    try {
+      job = await api.post('/api/scan-jobs', {
+        spaceId,
+        repoOwner: owner,
+        repoName: name,
+        rescan: true,
+      });
+    } catch (err) {
+      if (!NO_PREVIOUS_SCAN_RE.test(String(err?.message || ''))) throw err;
+      // A space whose diagram came from a plan chat (never server-scanned)
+      // has no base commit to diff against — a full scan heals that and
+      // seeds diagram_commit_sha for future incremental rescans.
+      console.log('[mergeRescan] No previous server scan — running a full scan instead');
+      publishRescanProgress(spaceId, runId, 1, 'No previous scan — queuing full scan...');
+      job = await api.post('/api/scan-jobs', {
+        spaceId,
+        repoOwner: owner,
+        repoName: name,
+        rescan: false,
+      });
+    }
     publishRescanProgress(spaceId, runId, job?.progress || 2, job?.stage || 'Rescan queued...');
 
     for (let i = 0; i < 200; i++) {
@@ -102,7 +124,7 @@ async function tryServerRescan(repoSlug, spaceId) {
         useCodeStore.getState().clearEditedCodeFiles();
         setTimeout(() => saveDiagramDigest(spaceId), 0);
         if (j.sha) localStorage.setItem(`diagramCommitSha_${spaceId}`, j.sha);
-        localStorage.setItem(`diagramMarkdownText_${spaceId}`, markdown);
+        saveSpaceMeta(spaceId, 'diagramMarkdownText', markdown).catch(() => {});
         console.log(
           `[mergeRescan] Server diff-rescan complete — ${j.changed_file_count ?? 0} file(s) changed,`,
           `${j.objects_created ?? 0} nodes, ${j.connections_created ?? 0} edges`
@@ -163,7 +185,16 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
       return;
     }
 
-    const existingMarkdown = localStorage.getItem(`diagramMarkdownText_${spaceId}`);
+    // The diagram markdown lives in IndexedDB space meta (localStorage was
+    // migrated away for quota reasons); the legacy key is the fallback for
+    // data written by older builds.
+    let existingMarkdown = null;
+    try {
+      existingMarkdown = await loadSpaceMeta(spaceId, 'diagramMarkdownText');
+    } catch { /* fall through to localStorage */ }
+    if (!existingMarkdown) {
+      existingMarkdown = localStorage.getItem(`diagramMarkdownText_${spaceId}`);
+    }
     if (!existingMarkdown) {
       console.warn('[mergeRescan] No existing markdown — skipping (repo not yet scanned)');
       return;
@@ -222,8 +253,7 @@ export async function rescanAfterMerge(repoSlug, spaceId) {
     localStorage.setItem(`diagramCommitSha_${spaceId}`, rescanResult.commitSha);
 
     // Persist the new markdown text for future rescan comparisons
-    const mdText = rescanResult.mergedMarkdown;
-    localStorage.setItem(`diagramMarkdownText_${spaceId}`, mdText);
+    saveSpaceMeta(spaceId, 'diagramMarkdownText', rescanResult.mergedMarkdown).catch(() => {});
 
     // Update code store with new content index, file sizes, import graph
     if (rescanResult.contentIndex) useCodeStore.getState().setContentIndex(rescanResult.contentIndex);

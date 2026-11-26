@@ -28,6 +28,7 @@ import {
   getGithubOAuthUrl,
   fetchRepositories,
   fetchFileContent,
+  fetchLatestCommitSha,
   refreshGithubConnection,
 } from '../services/githubRepoService';
 import {
@@ -788,8 +789,45 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           const enrichedMarkdown = enrichedBlocks
             .map((block) => '```merfolk\n' + block + '\n```')
             .join('\n\n');
+
+          // Persist the plan-generated diagram with the same guarantees a repo
+          // scan has. Without this, plan tasks find no merfolk context and a
+          // post-merge rescan has no diagram to update:
+          // - hydrate the 2D graph store (graph tools + GRAPH SUMMARY),
+          // - index the markdown as `merfolk:diagram` (architecture-map skill),
+          // - upload to storage + record HEAD so the space record gets
+          //   markdownStorageUrl / diagramCommitSha (server rescan + staleness).
+          markdownDiagramService
+            .hydrateStoreFromMarkdown(enrichedMarkdown)
+            .catch((err) => console.warn('[PlanSend] 2D graph hydration failed:', err.message));
+          populateContentStoreWorker(null, enrichedMarkdown);
+
+          let storageUrl = null;
+          let commitSha = null;
+          const owner = selectedRepo?.owner?.login || selectedRepo?.owner;
+          const repoName = selectedRepo?.name;
+          if (user?.uid && !user.isGuest && owner && repoName) {
+            try {
+              storageUrl = (await uploadMarkdownToStorage(
+                enrichedMarkdown,
+                user.uid,
+                spaceId,
+                `${repoName}-diagram.md`,
+              )) || null;
+            } catch (persistErr) {
+              console.warn('[PlanSend] Diagram upload failed:', persistErr.message);
+            }
+            try {
+              commitSha = (await fetchLatestCommitSha(owner, repoName)) || null;
+            } catch (persistErr) {
+              console.warn('[PlanSend] HEAD SHA fetch failed:', persistErr.message);
+            }
+          }
+
           onDiagramGenerated?.({
             markdown: enrichedMarkdown,
+            storageUrl,
+            commitSha,
             repo: selectedRepo,
           });
         }
@@ -1028,16 +1066,27 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         // service can skip its own SEARCH/REPLACE pass.
         const repoFileTree = repoContext?.fileTree || [];
         const appliedBlocks = [];
-        const getExistingContent = async (filePath) => {
-          const cached = csState.repoFileContents?.[filePath];
-          if (cached) return cached;
+        const fetchRepoFile = async (filePath, ref) => {
           const owner = selectedRepo.owner?.login || selectedRepo.owner;
           if (!owner) return null;
           try {
-            return await fetchFileContent(owner, selectedRepo.name, filePath);
+            return await fetchFileContent(owner, selectedRepo.name, filePath, undefined, ref);
           } catch {
             return null;
           }
+        };
+        // The harness edits and diffs against the content-store working copy,
+        // which F1 re-anchors to the pinned diagram commit. Applying a patch
+        // against a stale repoFileContents cache (fetched at an older commit)
+        // rejects valid hunks with "SEARCH did not match", so prefer the pinned
+        // snapshot here; the cache is only a fallback when that fetch fails.
+        const getExistingContent = async (filePath) => {
+          const pinnedSha = getSpaceCommitSha(spaceId);
+          const pinned = pinnedSha ? await fetchRepoFile(filePath, pinnedSha) : null;
+          if (pinned) return pinned;
+          const cached = csState.repoFileContents?.[filePath];
+          if (cached) return cached;
+          return fetchRepoFile(filePath);
         };
         const autoDiffToPatch = (existing, proposed, filePath) => {
           const normExisting = existing.replace(/\r\n/g, '\n');
@@ -1065,7 +1114,27 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
           const isExisting = existsInContents || existsInTree;
           if (isExisting && hasSearchReplaceMarkers(block.code)) {
             const existing = await getExistingContent(block.filePath);
-            const applied = existing ? applySearchReplace(existing, block.code) : null;
+            let applied = existing ? applySearchReplace(existing, block.code) : null;
+            if (!applied && existing) {
+              // Snapshot-skew retry: the first attempt may have applied against
+              // the pinned commit while the cache holds another commit (or vice
+              // versa) — e.g. after a merged PR moved HEAD but only one of the
+              // two was refreshed. Try the alternative snapshot before keeping
+              // the raw block, so a valid patch is not rejected over stale state.
+              const pinnedSha = getSpaceCommitSha(spaceId);
+              const candidates = [
+                await fetchRepoFile(block.filePath),
+                pinnedSha ? await fetchRepoFile(block.filePath, pinnedSha) : null,
+              ];
+              for (const alt of new Set(candidates.filter(Boolean))) {
+                if (alt === existing) continue;
+                const retried = applySearchReplace(alt, block.code);
+                if (retried) {
+                  applied = retried;
+                  break;
+                }
+              }
+            }
             if (applied) {
               appliedBlocks.push({ ...block, code: applied, fullContent: true });
               continue;
