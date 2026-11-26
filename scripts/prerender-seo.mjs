@@ -9,7 +9,7 @@
 //
 // Wired into "npm run build" (see package.json).
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SITE_SEO } from '../src/seo/siteContent.js';
@@ -143,5 +143,25 @@ function emitDocsPage() {
   console.log('[prerender-seo] wrote dist/docs/index.html');
 }
 
+// Some chunks (e.g. the entry, wrapped by the top-level-await plugin) ship a
+// .map file without the sourceMappingURL comment, so DevTools cannot resolve
+// their freeze stacks. Link every chunk that has a sibling map.
+function linkSourcemaps() {
+  const assetsDir = join(distDir, 'assets');
+  let linked = 0;
+  for (const file of readdirSync(assetsDir)) {
+    if (!file.endsWith('.js')) continue;
+    const mapName = `${file}.map`;
+    if (!existsSync(join(assetsDir, mapName))) continue;
+    const jsPath = join(assetsDir, file);
+    const content = readFileSync(jsPath, 'utf8');
+    if (content.includes('sourceMappingURL=')) continue;
+    writeFileSync(jsPath, `${content}\n//# sourceMappingURL=${mapName}`);
+    linked++;
+  }
+  console.log(`[prerender-seo] linked ${linked} sourcemap file(s)`);
+}
+
 injectIntoIndex();
 emitDocsPage();
+linkSourcemaps();

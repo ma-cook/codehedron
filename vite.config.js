@@ -13,7 +13,10 @@ export default defineConfig({
     global: 'globalThis',
   },
   build: {
-    sourcemap: 'hidden',
+    // Linked sourcemaps: freeze stacks in DevTools resolve to real functions
+    // and files (the diffToHunks freeze was localized by manual debugger
+    // pauses before this).
+    sourcemap: true,
     chunkSizeWarningLimit: 1600,
     rollupOptions: {
       external: ['typescript'],

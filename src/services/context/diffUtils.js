@@ -57,13 +57,19 @@ function simpleDiff(beforeLines, afterLines) {
   return [{ oldString: oldLines.join('\n'), newString: newLines.join('\n') }];
 }
 
-function countOccurrences(lines, anchor) {
-  const haystack = lines.join('\n');
-  const needle = anchor.join('\n');
+function countOccurrences(haystack, anchorLines) {
+  const needle = anchorLines.join('\n');
+  // An empty needle matches at EVERY position and indexOf('', pos + 1) always
+  // advances without ever returning -1: an INFINITE LOOP (measured — the app
+  // froze when an inserted hunk's first anchor line was blank, which happens
+  // whenever code is inserted after a blank line). Callers only test
+  // uniqueness, so report "never unique".
+  if (needle.length === 0) return Infinity;
   let count = 0;
   let pos = haystack.indexOf(needle);
   while (pos !== -1) {
     count++;
+    if (count > 2) return count; // callers only test uniqueness — stop early
     pos = haystack.indexOf(needle, pos + 1);
   }
   return count;
@@ -72,12 +78,17 @@ function countOccurrences(lines, anchor) {
 // Grow an anchor around a pure insertion so the resulting SEARCH block matches
 // uniquely. Anchor above the insert point when possible (preceding lines),
 // otherwise anchor below it (following lines, e.g. top-of-file inserts).
+// Whitespace-only anchors are skipped: they join to an empty needle, which is
+// never unique (and was the infinite loop). The haystack is joined once —
+// countOccurrences runs per candidate anchor length.
 function anchorInsert(beforeLines, insertLineIndex, insertedLines) {
+  const haystack = beforeLines.join('\n');
+  const isBlank = (ls) => ls.every((l) => l.trim().length === 0);
   if (insertLineIndex > 0) {
     let len = 1;
     while (len <= insertLineIndex) {
       const anchor = beforeLines.slice(insertLineIndex - len, insertLineIndex);
-      if (countOccurrences(beforeLines, anchor) === 1) {
+      if (!isBlank(anchor) && countOccurrences(haystack, anchor) === 1) {
         return { search: anchor, replace: [...anchor, ...insertedLines] };
       }
       len++;
@@ -86,7 +97,7 @@ function anchorInsert(beforeLines, insertLineIndex, insertedLines) {
     let len = 1;
     while (len <= beforeLines.length) {
       const anchor = beforeLines.slice(0, len);
-      if (countOccurrences(beforeLines, anchor) === 1) {
+      if (!isBlank(anchor) && countOccurrences(haystack, anchor) === 1) {
         return { search: anchor, replace: [...insertedLines, ...anchor] };
       }
       len++;
@@ -96,6 +107,18 @@ function anchorInsert(beforeLines, insertLineIndex, insertedLines) {
 }
 
 export function diffToHunks(before, after) {
+  const t0 = Date.now();
+  const hunks = diffToHunksInner(before, after);
+  const took = Date.now() - t0;
+  // Visibility for any remaining slow path: this runs on the main thread
+  // after every successful edit, so a slow diff would read as an app freeze.
+  if (took > 250) {
+    console.warn(`[diffToHunks] slow: ${took}ms for ${before.length} -> ${after.length} chars (${hunks.length} hunks)`);
+  }
+  return hunks;
+}
+
+function diffToHunksInner(before, after) {
   if (before === after) return [];
   const beforeLines = before.split('\n');
   const afterLines = after.split('\n');
