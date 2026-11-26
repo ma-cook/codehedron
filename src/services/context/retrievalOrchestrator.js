@@ -2146,11 +2146,15 @@ export async function sendWithRetrieval({
       let originalContent = preEditBaselines.get(filePath) ?? originalFileContents.get(filePath);
       if (!originalContent && githubContext) {
         try {
+          // Pin the fallback fetch to the same commit the harness baseline
+          // used, so the synthesized patch and the apply pass see the same
+          // snapshot instead of whatever HEAD/repoRefSha happen to be.
           originalContent = await fetchFileContent(
             githubContext.owner,
             githubContext.repo,
             filePath,
             githubContext.token,
+            githubContext.commitSha || undefined,
           );
         } catch { /* fall through to edit-record hunks */ }
       }

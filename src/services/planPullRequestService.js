@@ -229,11 +229,15 @@ export async function refreshRepoContextAfterMerge({
   defaultBranch,
   mergeCommitSha,
 }) {
-  if (!isSelectedRepo(spaceId, owner, repo)) return;
-
+  // Update the space's diagram commit SHA even when the repo-context refetch
+  // below is skipped (repo not currently selected in this tab). The SHA pins
+  // every GitHub fetch the harness and rescan flow make - letting it lag HEAD
+  // after a merge makes patch application fail against outdated snapshots.
   try {
     safeSetItem(`diagramCommitSha_${spaceId}`, mergeCommitSha || '');
   } catch { /* ignore */ }
+
+  if (!isSelectedRepo(spaceId, owner, repo)) return;
 
   try {
     const context = await fetchRepoContext(undefined, owner, repo, defaultBranch);

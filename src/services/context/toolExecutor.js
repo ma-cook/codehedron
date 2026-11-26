@@ -195,6 +195,13 @@ const appliedEdits = new Map();
 // to fall back to emitting a whole-file block).
 const appliedEditRecords = [];
 
+// Full post-edit content per file, captured when the edit/write tool persists.
+// The push/apply pass uses these as authoritative proposals - re-deriving the
+// content by applying SEARCH/REPLACE against a GitHub snapshot can reject valid
+// hunks whenever that snapshot is not the exact commit the harness edited
+// against (diagramCommitSha lags HEAD, cache is stale, etc).
+const editedFileSnapshots = new Map();
+
 // Last successful edit's 1-based line, keyed by normalized filePath. Used to
 // disambiguate exact matches that appear more than once: the model is most
 // likely continuing to work near its most recent edit in that file.
@@ -1093,11 +1100,16 @@ OUTPUT FORMAT:
 export function resetEditTracker() {
   appliedEdits.clear();
   appliedEditRecords.length = 0;
+  editedFileSnapshots.clear();
   lastEditLines.clear();
 }
 
 export function getAppliedEditRecords() {
   return appliedEditRecords;
+}
+
+export function getEditedFileSnapshots() {
+  return editedFileSnapshots;
 }
 
 /**
@@ -1823,6 +1835,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       console.log(`[Edit] ${filePath}: persisting ${updated.length} chars...`);
       await persistFileContent(storeId, filePath, updated);
       console.log(`[Edit] ${filePath}: persisted (round-trip integrity check ran)`);
+      editedFileSnapshots.set(filePath, updated);
 
       const oldLines = cleanedOldString.split('\n');
       const newLines = newString.split('\n');
@@ -1880,6 +1893,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
       await persistFileContent(storeId, filePath, content);
+      editedFileSnapshots.set(filePath, content);
 
       // Register the new path in the cached repo tree so subsequent rounds'
       // FILE TREE sees model-created files (previously they stayed invisible

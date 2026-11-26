@@ -10,6 +10,7 @@ import {
 import { saveScanSession } from '../services/scanJobSession';
 import { buildZenMessages, buildCodeGenMessages, fetchRepoContext, populateContentStoreWorker, getProviderCooldownRemainingMs } from '../services/zenService';
 import { sendWithRetrieval, getContentStore, waitForContentStoreHydration } from '../services/context';
+import { getEditedFileSnapshots } from '../services/context/toolExecutor';
 import { extractMerfolkBlocks } from '../services/merfolkExtractor';
 import { enrichPlanMerfolk } from '../services/planMerfolkEnricher';
 import { extractCodeBlocks } from '../services/codeExtractor';
@@ -1056,6 +1057,10 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
       const codeBlocks = extractCodeBlocks(codeResponse);
       const mergedBlocks = codeBlocks;
       const csState = useCodeStore.getState();
+      // Full post-edit content per file, recorded by the edit/write harness
+      // during this run. Copy at read time - the orchestrator clears the map
+      // at the start of the next run.
+      const editedSnapshots = new Map(getEditedFileSnapshots());
 
       if (mergedBlocks.length > 0 && selectedRepo && selectedBranch) {
         // The code-gen prompt requires SEARCH/REPLACE markers for existing
@@ -1083,10 +1088,18 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         const getExistingContent = async (filePath) => {
           const pinnedSha = getSpaceCommitSha(spaceId);
           const pinned = pinnedSha ? await fetchRepoFile(filePath, pinnedSha) : null;
-          if (pinned) return pinned;
+          if (pinned) {
+            console.log(`[CodeSend] ${filePath}: apply baseline from pinned ${pinnedSha.slice(0, 7)} (${pinned.length} chars)`);
+            return pinned;
+          }
           const cached = csState.repoFileContents?.[filePath];
-          if (cached) return cached;
-          return fetchRepoFile(filePath);
+          if (cached) {
+            console.log(`[CodeSend] ${filePath}: apply baseline from repoFileContents cache (${cached.length} chars, pinned fetch ${pinnedSha ? 'failed' : 'absent'})`);
+            return cached;
+          }
+          const fetched = await fetchRepoFile(filePath);
+          console.log(`[CodeSend] ${filePath}: apply baseline from unpinned fetch (${fetched ? `${fetched.length} chars` : 'not found'})`);
+          return fetched;
         };
         const autoDiffToPatch = (existing, proposed, filePath) => {
           const normExisting = existing.replace(/\r\n/g, '\n');
@@ -1107,6 +1120,18 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
         for (const block of mergedBlocks) {
           if (!block.filePath || !block.code) {
             appliedBlocks.push(block);
+            continue;
+          }
+          // The edit/write harness persisted the full post-edit content for
+          // this file - that content IS the authoritative proposal. Re-applying
+          // the model's or the synthesized SEARCH/REPLACE markers against a
+          // freshly fetched GitHub snapshot can only reject valid hunks (the
+          // snapshot may be a different commit than the one the harness edited
+          // against), so trust the harness output and skip marker matching.
+          const harnessSnapshot = editedSnapshots.get(block.filePath);
+          if (harnessSnapshot) {
+            console.log(`[CodeSend] ${block.filePath}: using harness edit snapshot (${harnessSnapshot.length} chars) as proposal`);
+            appliedBlocks.push({ ...block, code: harnessSnapshot, fullContent: true });
             continue;
           }
           const existsInContents = !!csState.repoFileContents?.[block.filePath];
@@ -1207,7 +1232,20 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
               action: isExisting ? 'modify' : 'create',
               request: text,
             };
-          });
+          })
+          // A file can appear twice (the model echoing a block plus the
+          // harness's canonical synthetic patch). Keep the LAST occurrence -
+          // the synthetic patch is appended after the model's text - so the
+          // PR never receives duplicate paths with diverging content.
+          .reduce((changes, change) => {
+            const existingIndex = changes.findIndex((c) => c.filePath === change.filePath);
+            if (existingIndex !== -1) {
+              changes[existingIndex] = change;
+              return changes;
+            }
+            changes.push(change);
+            return changes;
+          }, []);
         generatedChanges = newChanges;
         generatedBlocks = mergedBlocks.length;
         if (!options.skipPendingChanges) {
