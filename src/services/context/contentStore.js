@@ -1,4 +1,4 @@
-import { chunkText, extractKeywords, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
+import { chunkText, extractKeywords, joinChunks, MAX_INDEXED_FILE_CHARS } from './chunkIndex';
 import { saveContentStore, loadContentStore, clearContentStorePersistence } from './contentStorePersistence';
 import { notifyRepoContentChanged } from './repoContentSignal';
 
@@ -40,6 +40,52 @@ export class ContentStore {
         this.entries = saved.entries;
         this.invertedIndex = saved.invertedIndex;
         this.totalChunks = saved.totalChunks;
+        // Heal stores persisted before the chunk-ID fix: entries whose chunk
+        // ids do not conform to `${entry.id}:chunk-N` were written by the old
+        // bare-id scheme, whose flat-map collisions bled text BETWEEN files
+        // (measured: fragments of .gitignore surfacing inside other files'
+        // reads). Re-chunk from the joined text — content is preserved (the
+        // model repairs polluted text), the ID scheme is normalized so the
+        // bleed mechanism is gone, and the keyword index is rebuilt.
+        let healed = 0;
+        for (const [id, entry] of this.entries) {
+          const prefix = `${id}:chunk-`;
+          const conforming = Array.isArray(entry.chunks)
+            && entry.chunks.length > 0
+            && entry.chunks.every((c) => typeof c.id === 'string' && c.id.startsWith(prefix));
+          if (conforming) continue;
+          const config = CHUNK_CONFIGS[entry.category] || { chunkSize: 2000, overlap: 200 };
+          const content = joinChunks(entry.chunks);
+          entry.chunks = content.length > MAX_INDEXED_FILE_CHARS
+            ? [{
+                id: `${id}:chunk-0`,
+                text: content,
+                startIndex: 0,
+                endIndex: content.length,
+                keywords: [],
+                charCount: content.length,
+                oversized: true,
+              }]
+            : chunkText(content, { ...config, idPrefix: id });
+          this._dirtyIds.add(id);
+          healed++;
+        }
+        if (healed > 0) {
+          // Healed chunk ids changed — rebuild the keyword index from scratch.
+          this.invertedIndex = new Map();
+          this.totalChunks = 0;
+          for (const [, entry] of this.entries) {
+            this.totalChunks += entry.chunks.length;
+            for (const chunk of entry.chunks) {
+              for (const kw of chunk.keywords) {
+                if (!this.invertedIndex.has(kw)) this.invertedIndex.set(kw, new Set());
+                this.invertedIndex.get(kw).add(chunk.id);
+              }
+            }
+          }
+          this._persist();
+          console.warn(`[ContentStore] Healed ${healed} pre-fix entries with non-conforming chunk IDs (keyword index rebuilt)`);
+        }
         console.log(`[ContentStore] Hydrated from IndexedDB: ${this.entries.size} entries, ${this.totalChunks} chunks`);
       }
       this._hydrated = true;

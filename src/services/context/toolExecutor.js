@@ -517,18 +517,26 @@ function regionText(content, fromLine, toLine) {
 function findNearestRegion(content, oldString) {
   const searchLines = oldString.split('\n').filter(l => l.trim().length > 0);
   if (searchLines.length === 0) return null;
+  // Caps: this is a diagnostic-only helper on the edit not-found path, and it
+  // runs on the main thread — an unguarded scan over polluted/large content
+  // froze the entire app (measured). Bounded tokens, bounded lines, and a hard
+  // time check; degrading to no-hint is free.
   const distinctiveTokens = [];
   const tokenRe = /[A-Za-z_]\w{5,}|['"`][^'"`\n]{6,}['"`]/g;
   for (const line of searchLines) {
+    if (distinctiveTokens.length >= 60) break;
     const matches = line.match(tokenRe);
-    if (matches) distinctiveTokens.push(...matches);
+    if (matches) distinctiveTokens.push(...matches.slice(0, 60 - distinctiveTokens.length));
   }
   if (distinctiveTokens.length === 0) return null;
 
   const contentLines = content.split('\n');
+  const scanLimit = Math.min(contentLines.length, 5000);
+  const deadline = Date.now() + 1500;
   let bestLine = -1;
   let bestScore = 0;
-  for (let i = 0; i < contentLines.length; i++) {
+  for (let i = 0; i < scanLimit; i++) {
+    if ((i & 127) === 0 && Date.now() > deadline) break;
     let score = 0;
     for (const tok of distinctiveTokens) {
       if (contentLines[i].includes(tok)) score++;
