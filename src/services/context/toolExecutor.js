@@ -215,6 +215,15 @@ async function persistFileContent(storeId, filePath, content) {
           }
         }
       }
+      // Delete the entry's old chunk text from the flat Base64Store map too -
+      // a file that shrinks or is rewritten otherwise leaves orphaned chunk
+      // entries behind whose stale text can resurface through fallback
+      // lookups (the cross-file content-bleed bug class).
+      if (base64Store?.encodedChunks) {
+        for (const chunk of existing.chunks) {
+          base64Store.encodedChunks.delete(chunk.id);
+        }
+      }
       store.totalChunks -= existing.chunks.length;
     }
 
@@ -272,6 +281,20 @@ async function persistFileContent(storeId, filePath, content) {
         },
       });
       if (i % 25 === 0) await new Promise(r => setTimeout(r, 0));
+    }
+
+    // Integrity probe (content-corruption diagnosis): the chunk store must
+    // round-trip the exact content that was handed in. A mismatch means the
+    // chunk/overlap/ID machinery corrupted the file in storage - the bug class
+    // behind foreign text (e.g. fragments of other files) appearing in
+    // read_file output. Logged only on mismatch.
+    const rejoined = joinChunks(entry.chunks);
+    if (rejoined !== content) {
+      let diffIdx = 0;
+      const minLen = Math.min(rejoined.length, content.length);
+      while (diffIdx < minLen && rejoined[diffIdx] === content[diffIdx]) diffIdx++;
+      const ctx = (s) => JSON.stringify(s.slice(Math.max(0, diffIdx - 40), diffIdx + 60));
+      console.error(`[persistFileContent] INTEGRITY MISMATCH for ${filePath}: stored ${rejoined.length} chars vs source ${content.length} chars, first diff at ${diffIdx} — stored=${ctx(rejoined)} source=${ctx(content)}`);
     }
 }
 

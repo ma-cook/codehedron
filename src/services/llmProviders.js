@@ -656,6 +656,18 @@ export async function sendToProvider({
     clearTimeout(streamWatchdogId);
   }
 
+  // Integrity probe (model-output corruption diagnosis): for file-writing
+  // calls, log the streamed argument size plus head/tail. If corruption is
+  // visible here, it entered in the model's own streamed output (NVIDIA-side);
+  // if this is clean but stored files are not, the corruption happened in the
+  // content store (persistFileContent's round-trip check catches that side).
+  for (const tc of toolCallsMap.values()) {
+    const args = tc.arguments || '';
+    if (tc.name === 'write' || tc.name === 'edit' || args.length > 2000) {
+      console.log(`[sendToProvider][args] ${tc.name} argsLen=${args.length} head=${JSON.stringify(args.slice(0, 100))} tail=${JSON.stringify(args.slice(-100))}`);
+    }
+  }
+
   const toolCalls = finishReason === 'tool_calls' && toolCallsMap.size > 0
     ? [...toolCallsMap.values()].map(tc => ({
         id: tc.id,
