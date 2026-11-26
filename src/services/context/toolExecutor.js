@@ -301,6 +301,13 @@ async function persistFileContent(storeId, filePath, content) {
 function levenshteinDistance(a, b) {
   if (a.length === 0) return b.length;
   if (b.length === 0) return a.length;
+  // Length-delta bound: |len(a) - len(b)| is a lower bound on the edit
+  // distance, so when it already dominates the maximum there is no need to
+  // allocate the O(len^2) DP matrix — return the bound instead (monotonic and
+  // good enough for the fuzzy scorer; the primary guard against the
+  // multi-minute main-thread freezes seen on long-line pairs).
+  const maxLen = Math.max(a.length, b.length);
+  if (Math.abs(a.length - b.length) >= maxLen * 0.6) return maxLen;
   const matrix = Array.from({ length: a.length + 1 }, (_, i) =>
     Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
   );
@@ -312,11 +319,12 @@ function levenshteinDistance(a, b) {
   return matrix[a.length][b.length];
 }
 
-function lineTrimmedMatch(content, oldString) {
+function lineTrimmedMatch(content, oldString, deadline = Infinity) {
   const contentLines = content.split('\n');
   const searchLines = oldString.split('\n').filter(l => l !== '');
   if (searchLines.length === 0) return null;
   for (let i = 0; i <= contentLines.length - searchLines.length; i++) {
+    if ((i & 63) === 0 && Date.now() > deadline) return null;
     let matches = true;
     for (let j = 0; j < searchLines.length; j++) {
       if (contentLines[i + j].trim() !== searchLines[j].trim()) { matches = false; break; }
@@ -330,7 +338,7 @@ function lineTrimmedMatch(content, oldString) {
   return null;
 }
 
-function blockAnchorMatch(content, oldString) {
+function blockAnchorMatch(content, oldString, deadline = Infinity) {
   const searchLines = oldString.split('\n').filter(l => l !== '');
   if (searchLines.length < 3) return null;
   const firstLine = searchLines[0].trim();
@@ -354,6 +362,7 @@ function blockAnchorMatch(content, oldString) {
   // while running in O(n) for the enumeration.
   const lastPositions = [];
   for (let i = 0; i < n; i++) {
+    if ((i & 63) === 0 && Date.now() > deadline) return null;
     if (contentLines[i].trim() === lastLine) lastPositions.push(i);
   }
   if (lastPositions.length === 0) return null;
@@ -361,6 +370,7 @@ function blockAnchorMatch(content, oldString) {
   const candidates = [];
   let p = 0;
   for (let i = 0; i < n; i++) {
+    if ((i & 63) === 0 && Date.now() > deadline) return null;
     if (contentLines[i].trim() !== firstLine) continue;
     const jMin = Math.max(i + 2, i + jMinBase);
     const jMax = i + jMaxBase;
@@ -371,14 +381,28 @@ function blockAnchorMatch(content, oldString) {
   }
 
   let best = null, bestScore = 0;
-  for (const c of candidates) {
+  // Cap scored candidates: repetitive files can produce long anchor lists and
+  // each block's line-by-line scoring is the expensive part of this strategy.
+  const scored = candidates.slice(0, 100);
+  for (const c of scored) {
+    if (Date.now() > deadline) return null;
     let score = 0, count = 0;
     const maxK = Math.min(searchLines.length - 1, c.endLine - c.startLine);
     for (let k = 1; k < maxK; k++) {
       const a = contentLines[c.startLine + k].trim();
       const b = searchLines[k].trim();
       const maxLen = Math.max(a.length, b.length);
-      if (maxLen > 0) { score += 1 - levenshteinDistance(a, b) / maxLen; count++; }
+      if (maxLen === 0) continue;
+      // levenshtein is O(len^2) per pair; on long lines across many candidates
+      // that froze the main thread (measured). Bound it: skip pairs whose
+      // length delta already dominates, and use cheap equality for very long
+      // lines.
+      if (Math.abs(a.length - b.length) >= maxLen * 0.6) continue;
+      if (maxLen > 300) {
+        if (a === b) { score += 1; count++; }
+        continue;
+      }
+      score += 1 - levenshteinDistance(a, b) / maxLen; count++;
     }
     score = count > 0 ? score / count : 1;
     if (score > bestScore) { bestScore = score; best = c; }
@@ -393,12 +417,13 @@ function blockAnchorMatch(content, oldString) {
   return { index: start, length: end - start };
 }
 
-function whitespaceNormalizedMatch(content, oldString) {
+function whitespaceNormalizedMatch(content, oldString, deadline = Infinity) {
   const normalize = (s) => s.replace(/\s+/g, ' ').trim();
   const normOld = normalize(oldString);
   const contentLines = content.split('\n');
   const oldLines = oldString.split('\n');
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
+    if ((i & 31) === 0 && Date.now() > deadline) return null;
     const block = contentLines.slice(i, i + oldLines.length).join('\n');
     if (normalize(block) === normOld) {
       const start = contentLines.slice(0, i).join('\n').length + (i > 0 ? 1 : 0);
@@ -409,7 +434,7 @@ function whitespaceNormalizedMatch(content, oldString) {
   return null;
 }
 
-function indentationFlexibleMatch(content, oldString) {
+function indentationFlexibleMatch(content, oldString, deadline = Infinity) {
   const stripIndent = (s) => {
     const lines = s.split('\n');
     const nonEmpty = lines.filter(l => l.trim().length > 0);
@@ -421,6 +446,7 @@ function indentationFlexibleMatch(content, oldString) {
   const contentLines = content.split('\n');
   const oldLines = oldString.split('\n');
   for (let i = 0; i <= contentLines.length - oldLines.length; i++) {
+    if ((i & 31) === 0 && Date.now() > deadline) return null;
     const block = contentLines.slice(i, i + oldLines.length).join('\n');
     if (stripIndent(block) === normOld) {
       const start = contentLines.slice(0, i).join('\n').length + (i > 0 ? 1 : 0);
@@ -512,7 +538,14 @@ function hasDistinctiveToken(s) {
  * what stops tiny/hallucinated fragments from being fuzz-matched onto the wrong
  * block and silently corrupting the file.
  */
-function findMatch(content, oldString, { filePath } = {}) {
+// Fuzzy-match time budget: the strategies scan the whole file (some are
+// O(fileLines x blockLines)) and run on the main thread - without a deadline a
+// large oldString on a large/repetitive file froze the entire app (measured).
+// When the budget is spent, findMatch reports a timeout instead of matching,
+// and the edit fails with re-read guidance.
+const MATCH_TOTAL_BUDGET_MS = 2500;
+
+async function findMatch(content, oldString, { filePath } = {}) {
   const exactMatches = findAllExactMatches(content, oldString);
   if (exactMatches.length === 1) {
     return { index: exactMatches[0], length: oldString.length, strategy: 'exact' };
@@ -536,20 +569,36 @@ function findMatch(content, oldString, { filePath } = {}) {
   if (nonEmptyLines.length < 3) return null;
   if (!hasDistinctiveToken(oldString)) return null;
 
+  // Size guard: the whitespace/indentation-normalized strategies build and
+  // normalize a block per file line - O(fileLines x blockLines). Skip them
+  // when that product makes the scan untenable; the edit then fails with the
+  // not-found diagnostics instead of locking the app.
+  const contentLineCount = (content.match(/\n/g) || []).length + 1;
+  if (contentLineCount * nonEmptyLines.length > 2_000_000) {
+    console.warn(`[Edit] fuzzy match skipped - file (${contentLineCount} lines) x oldString (${nonEmptyLines.length} lines) exceeds the scan budget`);
+    return { timeout: true };
+  }
+
+  const deadline = Date.now() + MATCH_TOTAL_BUDGET_MS;
   const strategies = [
     { name: 'lineTrimmed', fn: lineTrimmedMatch },
     { name: 'blockAnchor', fn: blockAnchorMatch },
     { name: 'whitespaceNormalized', fn: whitespaceNormalizedMatch },
     { name: 'indentationFlexible', fn: indentationFlexibleMatch },
   ];
+  let timedOut = false;
   for (const strategy of strategies) {
-    const result = strategy.fn(content, oldString);
+    const result = strategy.fn(content, oldString, deadline);
     if (result) {
       console.log(`[Edit] Matched via ${strategy.name} strategy (index ${result.index}, length ${result.length})`);
       return { index: result.index, length: result.length, strategy: strategy.name };
     }
+    if (Date.now() > deadline) timedOut = true;
+    // Yield to the event loop between strategies so the UI stays responsive
+    // even while a strategy is mid-scan.
+    await new Promise((r) => setTimeout(r, 0));
   }
-  return null;
+  return timedOut ? { timeout: true } : null;
 }
 
 function withTimeout(promise, ms, label) {
@@ -1592,9 +1641,10 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const wholeFileRefusal = refuseWholeFileEdit(matchContent, cleanedOldString, filePath);
       if (wholeFileRefusal) return wholeFileRefusal;
 
-      const attemptEdit = (content) => {
-        const match = findMatch(content, cleanedOldString, { filePath });
+      const attemptEdit = async (content) => {
+        const match = await findMatch(content, cleanedOldString, { filePath });
         if (!match) return { match: null };
+        if (match.timeout) return { timeout: true };
         if (match.ambiguous) return { ambiguous: match };
         if (match.strategy !== 'exact' && match.length > cleanedOldString.length * 2) {
           return { oversized: true, match };
@@ -1603,7 +1653,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         return { match, updated };
       };
 
-      let attempt = attemptEdit(matchContent);
+      let attempt = await attemptEdit(matchContent);
       if (!attempt.match && !attempt.oversized && githubContext) {
         // The content store may hold a stale copy (persisted from an earlier
         // session). Re-fetch the current file from GitHub and retry once.
@@ -1619,7 +1669,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             matchContent = loadContent();
             const refreshRefusal = refuseWholeFileEdit(matchContent, cleanedOldString, filePath);
             if (refreshRefusal) return refreshRefusal;
-            attempt = attemptEdit(matchContent);
+            attempt = await attemptEdit(matchContent);
             if (attempt.match) {
               console.log(`[Edit] ${filePath}: store was stale — re-fetched from GitHub and matched`);
             }
@@ -1651,7 +1701,9 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
           if (contentLines[i].includes(cleanedFirstLine)) { closestLine = i + 1; closestContent = contentLines[i].slice(0, 120); break; }
         }
         let hint = '';
-        if (hadLineNumbers) {
+        if (attempt.timeout) {
+          hint = ` The match search ran out of its time budget - the oldString is too large for this file. Use a SMALLER, targeted oldString (one block, ~5-40 lines you have read this session).`;
+        } else if (hadLineNumbers) {
           hint = ` Line number prefixes (e.g. "10: code") were stripped from oldString but still no match.`;
         }
         let regionBlock = '';
