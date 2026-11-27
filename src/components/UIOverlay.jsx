@@ -2996,13 +2996,17 @@ const UIOverlay = ({
         )}
       </div>
 
-      {/* Group chat window - opens at the top-left of the chat area */}
-      {!trialMode && <ChatWindowInstance windowId={0} spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={handleClosePrimaryChat} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} launchRequest={chatLaunchRequest} />}
+      {/* Group chat window - opens at the top-left of the chat area.
+          Keyed per space: chat state (plan/code history, mode) loads from
+          per-space localStorage on mount only, so switching spaces must
+          remount the chat or the previous space's history persists and the
+          debounced persist effects write it into the new space's keys. */}
+      {!trialMode && <ChatWindowInstance key={currentSpaceId ? `primary-${currentSpaceId}` : 'primary-no-space'} windowId={0} spaceId={currentSpaceId} user={user} isOpen={chatOpen} onClose={handleClosePrimaryChat} onCreateObject={onCreateObject} onDiagramGenerated={handleChatDiagramGenerated} onAddChat={() => handleAddChat(0)} launchRequest={chatLaunchRequest} />}
 
       {/* Extra chat windows - each is an independent LLM chat */}
       {!trialMode && chatWindows.map((id) => (
         <ChatWindowInstance
-          key={id}
+          key={`${currentSpaceId}:${id}`}
           windowId={id}
           spaceId={currentSpaceId}
           user={user}

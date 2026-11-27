@@ -335,6 +335,23 @@ const SpaceChat = ({ spaceId, user, isOpen, onClose, onCreateObject, onDiagramGe
   const correctionsRef = useRef([]);
   const handledLaunchRequestRef = useRef(null);
 
+  // Unmount flush: the chat remounts on a space switch (space-scoped key in
+  // UIOverlay), and the debounced persist effects never fire for the final <1s
+  // of messages - their cleanup only clears the timer - so an in-flight run's
+  // transcript would be lost. Persist synchronously under the space the
+  // messages belong to: at unmount time these refs still hold the OLD spaceId
+  // (the new spaceId belongs to the newly mounted instance).
+  const spaceIdRef = useRef(spaceId);
+  spaceIdRef.current = spaceId;
+  const planMessagesRef = useRef(planMessages);
+  planMessagesRef.current = planMessages;
+  const codeMessagesRef = useRef(codeMessages);
+  codeMessagesRef.current = codeMessages;
+  useEffect(() => () => {
+    persistMessages(spaceIdRef.current, 'plan', planMessagesRef.current, windowId);
+    persistMessages(spaceIdRef.current, 'code', codeMessagesRef.current, windowId);
+  }, [windowId]);
+
   // Pending clarification from the LLM's ask_user tool. While set, the run is
   // paused waiting on the user; the resolver carries their answer back to the
   // harness so it can continue.
