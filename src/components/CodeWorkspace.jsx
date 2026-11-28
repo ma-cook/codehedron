@@ -25,7 +25,8 @@ const LANGUAGE_MAP = {
   js: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
   py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java',
   cs: 'csharp', php: 'php', cpp: 'cpp', c: 'c', h: 'c',
-  css: 'css', scss: 'scss', html: 'html', json: 'json', md: 'markdown',
+  css: 'css', scss: 'scss', html: 'html', svg: 'xml', xml: 'xml',
+  json: 'json', md: 'markdown',
   yml: 'yaml', yaml: 'yaml', sql: 'sql', sh: 'bash', bash: 'bash',
 };
 

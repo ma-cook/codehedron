@@ -9,6 +9,10 @@
  *   2. Raw repo contents in the code store, indexed by codeFilePath.
  *   3. Chunked repo entries in the content store (`repo:<path>`), re-joined
  *      via joinChunks.
+ *   4. Storage-uploaded .svg documents (SVG plane objects): metadata.svgUrl is
+ *      surfaced as a virtual `uploads/<name>.svg` path and fetched through the
+ *      authenticated storage API, so drawn planes are editable like any other
+ *      code file.
  *
  * When merfolkData carries a per-symbol startLine/endLine range, the resolved
  * text is sliced to exactly that symbol's code; otherwise the whole file is
@@ -19,9 +23,60 @@ import useDiagramStore from '../stores/diagramStore';
 import { getContentStore } from './context/contentStore';
 import { joinChunks } from './context/chunkIndex';
 import { fetchFileContent } from './githubRepoService';
+import { fetchStoredMarkdown } from './storageService';
 
 const CONTENT_ID_PREFIX = 'repo:';
 const inFlightCodeFetches = new Map();
+
+/** True for virtual storage paths (`uploads/….svg`) and repo .svg files. */
+export const isSvgPath = (filePath) => /\.svg$/i.test(String(filePath || ''));
+
+/**
+ * True for storage-relative paths (`uploads/...`) served by our backend
+ * storage API — these are NOT on GitHub and must never be fetched there.
+ */
+export const isStoragePath = (filePath) => String(filePath || '').startsWith('uploads/');
+
+/**
+ * True for SVG plane objects — drawings saved from the SVG canvas. They carry
+ * their document as a storage upload (`metadata.svgUrl`) rather than a repo
+ * file, so their code resolves to a virtual `uploads/<name>.svg` path.
+ */
+export function isSvgPlaneObject(objectData) {
+  const url = objectData?.metadata?.svgUrl;
+  return typeof url === 'string' && url.length > 0;
+}
+
+/**
+ * Map a storage URL (`{API_BASE}/api/storage/uploads/x.svg`, or a bare
+ * `uploads/x.svg` path) to the storage-relative path used as the object's
+ * virtual code file path. Returns '' when the URL is not a recognizable
+ * storage path.
+ */
+export function storagePathFromSvgUrl(url) {
+  if (typeof url !== 'string' || url.length === 0) return '';
+  const marker = '/api/storage/';
+  const idx = url.indexOf(marker);
+  if (idx !== -1) return url.slice(idx + marker.length).split('?')[0];
+  const bare = url.match(/(?:^|\/)(uploads\/[^\s?#]+\.svg)/i);
+  return bare ? bare[1] : '';
+}
+
+/**
+ * Uploaded SVG documents may carry an XML prolog or trailing whitespace — the
+ * editable surface is the `<svg>…</svg>` document itself.
+ */
+export function extractSvgDocument(text) {
+  if (typeof text !== 'string') return text;
+  const start = text.indexOf('<svg');
+  const end = text.lastIndexOf('</svg>');
+  if (start === -1 || end === -1 || end < start) return text;
+  return text.slice(start, end + '</svg>'.length);
+}
+
+/** Extract the svg document only when the path is an .svg file. */
+const extractForPath = (filePath, text) =>
+  isSvgPath(filePath) ? extractSvgDocument(text) : text;
 
 /** Slice `{line, col}`-agnostic text by 1-based inclusive line range. */
 const sliceRange = (text, startLine, endLine) => {
@@ -55,14 +110,28 @@ export async function ensureFullFileContent(filePath, repoContext) {
   const cached = getCachedFullFileContent(filePath);
   if (cached != null) return cached;
 
+  // Storage-backed files (SVG plane uploads) are not on GitHub — fetch the
+  // document through the authenticated storage API (used by the code
+  // workspace's save flow to rebuild the full file for review).
+  if (isStoragePath(filePath)) {
+    const text = await fetchStoredMarkdown(filePath);
+    if (typeof text === 'string' && text.length > 0) {
+      const doc = extractForPath(filePath, text);
+      useCodeStore.getState().cacheRepoFileContent(filePath, doc);
+      return doc;
+    }
+    return null;
+  }
+
   const { owner, repoName, branch } = resolveRepoCoordinates(repoContext);
   if (!owner || !repoName) return null;
 
   const ref = repoContext?.commitSha || branch || undefined;
   const text = await fetchFileContent(owner, repoName, filePath, undefined, ref);
   if (typeof text === 'string') {
-    useCodeStore.getState().cacheRepoFileContent(filePath, text);
-    return text;
+    const doc = extractForPath(filePath, text);
+    useCodeStore.getState().cacheRepoFileContent(filePath, doc);
+    return doc;
   }
   return null;
 }
@@ -143,6 +212,13 @@ export function resolveCodeInfo(objectData, nodeCodeIndex) {
   let startLine = objectData?.merfolkData?.startLine;
   let endLine = objectData?.merfolkData?.endLine;
 
+  // SVG plane objects keep their document as a storage upload; surface it as a
+  // virtual `uploads/<name>.svg` path so the code workspace and the chat AI's
+  // read/edit tools address it like any other code file.
+  if (!filePath && isSvgPlaneObject(objectData)) {
+    filePath = storagePathFromSvgUrl(objectData.metadata.svgUrl);
+  }
+
   if (!filePath) {
     const nodeId = objectData?.merfolkData?.nodeId;
     if (nodeId) {
@@ -178,13 +254,13 @@ export function getCodeForObject(objectData) {
 
   const raw = useCodeStore.getState().repoFileContents?.[filePath];
   if (typeof raw === 'string' && raw.length > 0) {
-    return sliceRange(raw, range.startLine, range.endLine);
+    return sliceRange(extractForPath(filePath, raw), range.startLine, range.endLine);
   }
 
   const contentStore = getContentStore();
   const entry = contentStore.getEntry(`${CONTENT_ID_PREFIX}${filePath}`);
   if (entry?.chunks?.length > 0) {
-    return sliceRange(joinChunks(entry.chunks), range.startLine, range.endLine);
+    return sliceRange(extractForPath(filePath, joinChunks(entry.chunks)), range.startLine, range.endLine);
   }
 
   return null;
@@ -221,6 +297,33 @@ export async function ensureObjectCodeAvailable(objectData, repoContext) {
   } = resolveCodeInfo(objectData);
   if (!filePath) return null;
 
+  // Storage-backed files (SVG plane uploads) are not on GitHub — fetch the
+  // document through the authenticated storage API and cache it under the
+  // virtual path so subsequent reads and the chat AI's tools find it.
+  if (isStoragePath(filePath)) {
+    const storageKey = `storage:${filePath}`;
+    if (inFlightCodeFetches.has(storageKey)) return inFlightCodeFetches.get(storageKey);
+    const storageTask = (async () => {
+      const text = await fetchStoredMarkdown(filePath);
+      if (typeof text !== 'string' || text.length === 0) {
+        throw new Error('SVG content is unavailable');
+      }
+      const doc = extractForPath(filePath, text);
+      useCodeStore.getState().cacheRepoFileContent(filePath, doc);
+      return sliceRange(
+        doc,
+        startLine ?? objectData.merfolkData?.startLine,
+        endLine ?? objectData.merfolkData?.endLine
+      );
+    })();
+    inFlightCodeFetches.set(storageKey, storageTask);
+    try {
+      return await storageTask;
+    } finally {
+      inFlightCodeFetches.delete(storageKey);
+    }
+  }
+
   const { owner, repoName, branch } = resolveRepoCoordinates(repoContext);
   if (!owner || !repoName) {
     throw new Error('Repository context is unavailable');
@@ -233,9 +336,10 @@ export async function ensureObjectCodeAvailable(objectData, repoContext) {
   const task = (async () => {
     const text = await fetchFileContent(owner, repoName, filePath, undefined, ref);
     if (typeof text === 'string') {
-      useCodeStore.getState().cacheRepoFileContent(filePath, text);
+      const doc = extractForPath(filePath, text);
+      useCodeStore.getState().cacheRepoFileContent(filePath, doc);
       return sliceRange(
-        text,
+        doc,
         startLine ?? objectData.merfolkData?.startLine,
         endLine ?? objectData.merfolkData?.endLine
       );
@@ -261,5 +365,6 @@ export function objectHasCode(objectData, codeStoreState) {
   if (typeof objectData.metadata?.code === 'string' && objectData.metadata.code.length > 0) {
     return true;
   }
+  if (isSvgPlaneObject(objectData)) return true;
   return !!resolveCodeInfo(objectData, codeStoreState?.nodeCodeIndex).filePath;
 }

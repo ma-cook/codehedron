@@ -1,5 +1,13 @@
 import { getContentStore, ContentCategory, waitForContentStoreHydration } from './contentStore';
 import { fetchFileContent } from '../githubRepoService';
+import { fetchStoredMarkdown } from '../storageService';
+import {
+  isStoragePath,
+  isSvgPath,
+  isSvgPlaneObject,
+  storagePathFromSvgUrl,
+  extractSvgDocument,
+} from '../objectCodeService';
 import { getBase64Store, waitForBase64StoreHydration } from './base64Store';
 import { chunkTextWithYield, MAX_INDEXED_FILE_CHARS, joinChunks } from './chunkIndex';
 import { getContentStoreWorker, getContentStoreWorkerHealth } from '../../workers/contentStoreWorkerClient';
@@ -65,6 +73,11 @@ function refuseWholeFileEdit(content, cleanedOldString, filePath) {
 }
 
 const normalizePath = (p) => (p || '').replace(/^\.\//, '').replace(/\\/g, '/');
+
+// SVG documents are read/edited as their `<svg>…</svg>` body: storage uploads
+// may wrap the document in an XML prolog or trailing newline, and the code
+// workspace applies the same extraction, so oldStrings line up on both sides.
+const svgAware = (filePath, text) => (isSvgPath(filePath) ? extractSvgDocument(text) : text);
 
 // Resolve the Git ref to pin every GitHub fetch to. Callers thread the space's
 // scanned commit SHA through githubContext.commitSha so reads/edit/write and the
@@ -1292,7 +1305,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         // Self-heal stale/corrupt entries: re-fetch once from GitHub (which
         // persistFileContent re-stamps fresh, so later reads are served from
         // the store). On fetch failure keep the store copy — stale beats nothing.
-        if (fullContent && storeReadSuspect(entry, fullContent) && githubContext) {
+        if (fullContent && storeReadSuspect(entry, fullContent) && githubContext && !isStoragePath(path)) {
           try {
             const fresh = await withTimeout(
               fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token, repoRefOf(githubContext)),
@@ -1310,7 +1323,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
 
-      if (!fullContent && githubContext) {
+      if (!fullContent && githubContext && !isStoragePath(path)) {
         try {
           fullContent = await withTimeout(
             fetchFileContent(githubContext.owner, githubContext.repo, path, githubContext.token, repoRefOf(githubContext)),
@@ -1318,7 +1331,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
             `read_file(${path})`,
           );
           if (fullContent) {
-            persistFileContent(storeId, path, fullContent);
+            persistFileContent(storeId, path, svgAware(path, fullContent));
             refetched = true;
           }
         } catch (err) {
@@ -1326,9 +1339,52 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
         }
       }
 
+      // Storage-backed files (SVG plane uploads) are not on GitHub — fetch the
+      // document through the authenticated storage API.
+      if (!fullContent && isStoragePath(path)) {
+        try {
+          fullContent = await withTimeout(
+            fetchStoredMarkdown(path),
+            TOOL_TIMEOUT_MS,
+            `read_file(${path})`,
+          );
+          if (fullContent) {
+            fullContent = svgAware(path, fullContent);
+            persistFileContent(storeId, path, fullContent);
+            refetched = true;
+          }
+        } catch (err) {
+          return { success: false, content: `Error reading ${path}: ${err.message}` };
+        }
+      }
+
+      // A store copy for a storage file persisted by an earlier session is
+      // suspect too — re-fetch from the storage API once (stale beats nothing
+      // when the re-fetch fails).
+      if (!refetched && fullContent && isStoragePath(path) && storeReadSuspect(entry, fullContent)) {
+        try {
+          const fresh = await withTimeout(
+            fetchStoredMarkdown(path),
+            TOOL_TIMEOUT_MS,
+            `read_file(${path})`,
+          );
+          if (fresh) {
+            fullContent = svgAware(path, fresh);
+            persistFileContent(storeId, path, fullContent);
+            refetched = true;
+          }
+        } catch (err) {
+          console.warn(`[read_file] storage entry suspect and re-fetch failed (serving store copy): ${err.message}`);
+        }
+      }
+
       if (!fullContent) {
         return { success: false, content: `File not found: ${path}` };
       }
+
+      // SVG files are always surfaced as their <svg>…</svg> body so the model
+      // sees the same text the editable code workspace shows.
+      fullContent = svgAware(path, fullContent);
 
       recordFileRead();
       await new Promise(r => setTimeout(r, 0));
@@ -1340,7 +1396,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       }
       const selectedLines = allLines.slice(startLine - 1, endLine);
       const numbered = selectedLines.map((line, i) => `${startLine + i}: ${line}`).join('\n');
-      const sectionLabel = `[Read ${path}: lines ${startLine}-${endLine} of ${totalLines}]${refetched ? ' [fetched fresh from GitHub — store copy was stale]' : ''}`;
+      const sectionLabel = `[Read ${path}: lines ${startLine}-${endLine} of ${totalLines}]${refetched ? ' [fetched fresh — store copy was stale]' : ''}`;
       const suffix = endLine < totalLines
         ? `\n\n(Use offset=${endLine + 1} to continue reading.)`
         : '\n\n(End of file)';
@@ -1386,7 +1442,11 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       for (const obj of sceneObjects) {
         const nodeId = obj.merfolkData?.nodeId || '';
         const name = (obj.headerText || '').toLowerCase();
-        const filePath = obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath || '';
+        // SVG plane objects keep their document as a storage upload rather than
+        // a repo path — surface the virtual uploads/…​.svg path so the agent can
+        // discover and read_file/edit them like any other code file.
+        const filePath = obj.merfolkData?.codeFilePath || obj.metadata?.codeFilePath
+          || (isSvgPlaneObject(obj) ? storagePathFromSvgUrl(obj.metadata.svgUrl) : '');
         if (!filePath) continue;
         if (normalize(nodeId).includes(pattern) || normalize(name).includes(pattern)) {
           const nodeType = obj.merfolkData?.nodeType || obj.type || 'unknown';
@@ -1667,6 +1727,23 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
           return { success: false, content: `edit failed: could not load ${filePath}: ${err.message}` };
         }
       }
+      // Storage-backed files (SVG plane uploads) are not on GitHub — load them
+      // through the authenticated storage API instead.
+      if (!entry && isStoragePath(filePath)) {
+        try {
+          const fresh = await withTimeout(
+            fetchStoredMarkdown(filePath),
+            TOOL_TIMEOUT_MS,
+            `edit-load(${filePath})`,
+          );
+          if (fresh) {
+            await persistFileContent(storeId, filePath, svgAware(filePath, fresh));
+            entry = store.getEntry(storeId);
+          }
+        } catch (err) {
+          return { success: false, content: `edit failed: could not load ${filePath}: ${err.message}` };
+        }
+      }
       if (!entry) {
         return { success: false, content: `File not loaded: ${filePath}. Use read_file("${filePath}") first to load it into memory.` };
       }
@@ -1742,7 +1819,7 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       };
 
       let attempt = await attemptEdit(matchContent);
-      if (!attempt.match && !attempt.oversized && githubContext) {
+      if (!attempt.match && !attempt.oversized && githubContext && !isStoragePath(filePath)) {
         // The content store may hold a stale copy (persisted from an earlier
         // session). Re-fetch the current file from GitHub and retry once.
         try {
@@ -1866,6 +1943,9 @@ export async function executeTool(name, args, githubContext, fileTree = [], { ru
       const content = args.content;
       if (!filePath || content == null) {
         return { success: false, content: 'write requires "filePath" and "content" parameters' };
+      }
+      if (isStoragePath(filePath)) {
+        return { success: false, content: `write rejected: "${filePath}" is a storage upload (an SVG plane document), not a repository file. Use the edit tool to change its content.` };
       }
       const existingFile = fileTree.some(f => f === filePath);
       const storeId = `repo:${filePath}`;
