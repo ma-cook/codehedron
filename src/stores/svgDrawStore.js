@@ -1,4 +1,8 @@
 import { create } from 'zustand';
+import {
+  buildSvgDocument,
+  elementToSvgMarkup as serializeElementToSvgMarkup,
+} from '../services/svgBuilder';
 
 // ---------------------------------------------------------------------------
 // SVG drawing store
@@ -28,49 +32,22 @@ function makeElementId() {
   return `el-${Date.now().toString(36)}-${nextElementId++}`;
 }
 
-function round(n) {
-  return Math.round(n * 100) / 100;
-}
-
-function escapeXml(text) {
-  return String(text)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
 // ---------------------------------------------------------------------------
-// Serialization: element list -> SVG markup (used by the live syntax preview)
+// Serialization
+//
+// All SVG serialization lives in the canonical svgBuilder service
+// (src/services/svgBuilder.js). The store re-exports the per-element helper
+// for API stability; full documents come from buildSvgDocument via
+// getSvgString below.
 // ---------------------------------------------------------------------------
 
 export function elementToSvgMarkup(el) {
-  if (!el) return '';
-  switch (el.type) {
-    case 'pencil': {
-      const pts = (el.points || [])
-        .map((p) => `${round(p[0])},${round(p[1])}`)
-        .join(' ');
-      return `<polyline points="${pts}" fill="none" stroke="${el.color}" stroke-width="${el.strokeWidth}" stroke-linecap="round" stroke-linejoin="round" />`;
-    }
-    case 'rect':
-      return `<rect x="${round(el.x)}" y="${round(el.y)}" width="${round(el.width)}" height="${round(el.height)}" fill="none" stroke="${el.color}" stroke-width="${el.strokeWidth}" />`;
-    case 'circle':
-      return `<circle cx="${round(el.cx)}" cy="${round(el.cy)}" r="${round(el.r)}" fill="none" stroke="${el.color}" stroke-width="${el.strokeWidth}" />`;
-    case 'line':
-      return `<line x1="${round(el.x1)}" y1="${round(el.y1)}" x2="${round(el.x2)}" y2="${round(el.y2)}" stroke="${el.color}" stroke-width="${el.strokeWidth}" stroke-linecap="round" />`;
-    case 'text':
-      return `<text x="${round(el.x)}" y="${round(el.y)}" fill="${el.color}" font-size="${el.fontSize}" font-family="sans-serif">${escapeXml(el.text)}</text>`;
-    default:
-      return '';
-  }
+  return serializeElementToSvgMarkup(el);
 }
 
-function buildSvg(elements, width, height) {
-  const body = (elements || []).map(elementToSvgMarkup).join('\n  ');
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${round(width)} ${round(height)}" width="${round(width)}" height="${round(height)}">\n  ${body}\n</svg>`;
-}
+// Full-document serialization (getSvgString) delegates to the canonical
+// svgBuilder service, so the saved SVG file is byte-for-byte what getSvgString
+// and the overlay's live syntax preview produce.
 
 // ---------------------------------------------------------------------------
 // Store
@@ -298,7 +275,7 @@ const useSvgDrawStore = create((set, get) => ({
 
   getSvgString: () => {
     const { getDrawableElements, canvasSize } = get();
-    return buildSvg(getDrawableElements(), canvasSize.width, canvasSize.height);
+    return buildSvgDocument(getDrawableElements(), canvasSize);
   },
 }));
 

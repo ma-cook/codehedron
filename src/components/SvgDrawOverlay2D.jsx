@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HexColorPicker } from 'react-colorful';
-import useSvgDrawStore, { elementToSvgMarkup } from '../stores/svgDrawStore';
+import useSvgDrawStore from '../stores/svgDrawStore';
+import { buildSvgDocument } from '../services/svgBuilder';
 
 // ---------------------------------------------------------------------------
 // SvgDrawOverlay2D — drawing panel for SVG spaces.
@@ -146,12 +147,12 @@ const SvgDrawOverlay2D = () => {
   const scale = CANVAS_DISPLAY_WIDTH / canvasSize.width;
   const displayHeight = Math.round(canvasSize.height * scale);
 
-  // Live SVG syntax: committed + in-progress draft.
-  const svgSyntax = useMemo(() => {
-    const drawable = draft ? [...elements, draft] : elements;
-    const body = drawable.map(elementToSvgMarkup).join('\n  ');
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${canvasSize.width} ${canvasSize.height}">\n  ${body}\n</svg>`;
-  }, [elements, draft, canvasSize]);
+  // Live SVG syntax: committed + in-progress draft, serialized through the
+  // canonical svgBuilder so the preview is exactly what gets saved.
+  const svgSyntax = useMemo(
+    () => buildSvgDocument(draft ? [...elements, draft] : elements, canvasSize),
+    [elements, draft, canvasSize]
+  );
 
   // --- pointer handling -----------------------------------------------------
 
