@@ -150,6 +150,7 @@ export const CreateSpacePopup = React.memo(
                 <option value="brain_space">Brain Space</option>
                 <option value="earth">Earth Space</option>
                 <option value="github_control_panel">Github Control Panel</option>
+                <option value="svg">SVG Space</option>
               </select>
             </div>
 

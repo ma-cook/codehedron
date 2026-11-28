@@ -83,6 +83,13 @@ import { objectVirtualizer } from './utils/objectVirtualization';
  * Main application component
  */
 const App = ({ onBackToLanding = null, trialMode = false, spaceType: spaceTypeProp = 'diagram' }) => {
+  // Space types rendered by this app. 'svg' is accepted here for forward
+  // compatibility with the SVG Space playback harness (see spaceManagerStore);
+  // unknown types keep the default diagram behavior.
+  const VALID_SPACE_TYPES = ['diagram', 'brain_space', 'earth', 'github_control_panel', 'svg'];
+  const effectiveSpaceType = VALID_SPACE_TYPES.includes(spaceTypeProp)
+    ? spaceTypeProp
+    : 'diagram';
   // Base state
   const [publicSpaceReady, setPublicSpaceReady] = useState(false);
   const [currentSpaceOwner, setCurrentSpaceOwner] = useState(null);
@@ -1746,7 +1753,7 @@ const existingIdsRef = useRef(new Set());
           onLineTextSubmit={handleLineTextSubmit}
           onLineTextStyleChange={handleLineTextStyleChange}
         />
-        {spaceTypeProp === 'earth' && <EarthGlobe />}
+        {effectiveSpaceType === 'earth' && <EarthGlobe />}
         <ObjectsRenderer
           objects={objects}
           selectedId={selectedId}
@@ -1788,7 +1795,7 @@ const existingIdsRef = useRef(new Set());
       )}
     </>
   ), [
-    useLOD, viewMode, spaceTypeProp, canvasQuality,
+    useLOD, viewMode, effectiveSpaceType, canvasQuality,
     objects, selectedId,
     llmActiveObjectIds,
     handleObjectClick, handleObjectMoveCallback, handleObjectUpdateCallback,
@@ -1858,7 +1865,7 @@ const existingIdsRef = useRef(new Set());
         currentCell={cameraCellCoords}
         currentSpaceId={effectiveSpaceId}
         trialMode={trialMode}
-        spaceType={spaceTypeProp}
+        spaceType={effectiveSpaceType}
       />
     </>
   );

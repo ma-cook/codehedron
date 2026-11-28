@@ -29,6 +29,23 @@ const isIndexableLocation = () =>
   !window.location.hostname.endsWith('.pages.dev') &&
   window.location.search.length <= 1;
 
+/**
+ * Space types recognized by the app shell. Must stay in sync with
+ * VALID_SPACE_TYPES in backend/src/api/spaces.js (the API rejects anything
+ * else on create/update) and the <option> list in CreateSpacePopup.
+ */
+const VALID_SPACE_TYPES = [
+  'diagram',
+  'brain_space',
+  'earth',
+  'github_control_panel',
+  'svg',
+];
+
+// Unknown ?type= values fall back to the default diagram space.
+const normalizeSpaceType = (type) =>
+  VALID_SPACE_TYPES.includes(type) ? type : 'diagram';
+
 const AppShell = () => {
   const [activeView, setActiveView] = useState('landing'); // 'landing' | 'diagram'
   const [spaceContext, setSpaceContext] = useState(null);
@@ -46,7 +63,7 @@ const AppShell = () => {
       const urlSpaceType = params.get('type');
       const urlSpaceId = params.get('spaceId') || params.get('space');
       if (urlSpaceId && urlSpaceType) {
-        setSpaceContext((prev) => prev || { spaceId: urlSpaceId, ownerId: null, spaceType: urlSpaceType });
+        setSpaceContext((prev) => prev || { spaceId: urlSpaceId, ownerId: null, spaceType: normalizeSpaceType(urlSpaceType) });
       }
       setActiveView('diagram');
     }
@@ -54,7 +71,7 @@ const AppShell = () => {
 
   const handleOpenSpace = useCallback((spaceId, ownerId, spaceType = 'diagram') => {
     setPageIndexable(false);
-    setSpaceContext({ spaceId, ownerId, spaceType });
+    setSpaceContext({ spaceId, ownerId, spaceType: normalizeSpaceType(spaceType) });
     let newUrl = `${window.location.pathname}?spaceId=${encodeURIComponent(spaceId)}`;
     if (spaceType && spaceType !== 'diagram') {
       newUrl += `&type=${encodeURIComponent(spaceType)}`;

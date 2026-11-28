@@ -26,6 +26,9 @@ export function serializeSpace(row) {
     repoContentsStorageUrl: row.repo_contents_storage_url,
     diagramCommitSha: row.diagram_commit_sha,
     diagramRepo: row.diagram_repo,
+    // Top-level convenience read for clients (SpacesTable renders an icon per
+    // type); the authoritative value stays in metadata.type.
+    type: normalizeSpaceType(row.metadata?.type),
   };
 }
 
@@ -62,6 +65,12 @@ router.post('/', async (req, res) => {
   const userId = req.user.sub;
   const { name, is_public, metadata } = req.body;
   if (!name) return res.status(400).json({ error: 'Name is required' });
+  // Reject unknown space types up front so bad payloads never reach the DB.
+  if (metadata?.type !== undefined && !isValidSpaceType(metadata.type)) {
+    return res.status(400).json({
+      error: `Invalid space type: ${JSON.stringify(metadata.type)}. Valid types: ${VALID_SPACE_TYPES.join(', ')}`,
+    });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -119,7 +128,7 @@ router.get('/resolve/:slug', async (req, res) => {
       name: row.name,
       isPublic: row.is_public,
       metadata: row.metadata,
-      type: row.metadata?.type || 'diagram',
+      type: normalizeSpaceType(row.metadata?.type),
     });
   } catch (err) {
     console.error('Resolve space error:', err);
@@ -189,6 +198,15 @@ router.patch('/:id', async (req, res) => {
           return res.status(403).json({ error: 'You can only share with organizations you belong to' });
         }
       }
+    }
+
+    // Same type guard as POST: a PATCH must never overwrite metadata.type
+    // with an unknown value (frontend routing keys off it).
+    if (metadata !== undefined && metadata !== null && metadata.type !== undefined
+        && !isValidSpaceType(metadata.type)) {
+      return res.status(400).json({
+        error: `Invalid space type: ${JSON.stringify(metadata.type)}. Valid types: ${VALID_SPACE_TYPES.join(', ')}`,
+      });
     }
 
     const result = await pool.query(
