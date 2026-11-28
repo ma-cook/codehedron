@@ -9,6 +9,17 @@ export const router = Router();
 const bucketName = process.env.GCS_BUCKET;
 const storage = bucketName ? new Storage() : null;
 
+const VALID_SPACE_TYPES = [
+  'diagram',
+  'brain_space',
+  'earth',
+  'github_control_panel',
+  'svg',
+];
+
+const isValidSpaceType = (type) => VALID_SPACE_TYPES.includes(type);
+const normalizeSpaceType = (type) => (isValidSpaceType(type) ? type : 'diagram');
+
 /**
  * API-shape mapping: the frontend reads/writes camelCase for the diagram
  * persistence fields, while the DB (and the scanner worker) use snake_case.
