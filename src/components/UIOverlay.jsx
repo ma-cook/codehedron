@@ -52,6 +52,7 @@ import {
 import SpacePresenceAvatars from './SpacePresenceAvatars';
 import ObjectSearch from './ObjectSearch';
 import TopBar from './TopBar';
+import SvgDrawOverlay2D from './SvgDrawOverlay2D';
 import { OrganizationManager } from '../landing/components/OrganizationManager';
 import { signOut } from '../services/authService';
 import SpaceChat, { SPACE_CHAT_DEFAULT_WIDTH, SPACE_CHAT_DEFAULT_HEIGHT, SPACE_CHAT_GAP, CHAT_BOUNDS_LEFT, CHAT_BOUNDS_TOP, CHAT_BOUNDS_MARGIN } from './SpaceChat';
@@ -2235,6 +2236,7 @@ const UIOverlay = ({
   if (isSvgSpace) {
     return (
       <>
+        <SvgDrawOverlay2D />
         <TopBar
           view="space"
           user={user}
