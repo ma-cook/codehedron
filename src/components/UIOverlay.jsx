@@ -2226,6 +2226,87 @@ const UIOverlay = ({
     );
   }
 
+  // Minimal harness for SVG spaces: only the top bar (chat/AI button, theme
+  // toggle, presence avatars, org/user avatar with logout) and the chat/AI
+  // launcher are rendered. All code/diagram/object tooling is hidden until
+  // the SVG drawing canvas is wired into this space type.
+  const isSvgSpace = spaceType === 'svg';
+
+  if (isSvgSpace) {
+    return (
+      <>
+        <TopBar
+          view="space"
+          user={user}
+          onMenuToggle={handleMenuToggle}
+          onLogout={handleLogout}
+          onOpenOrgManager={() => setShowOrgManager(true)}
+          actions={<ThemeToggleButton />}
+          presence={
+            <SpacePresenceAvatars
+              spaceId={currentSpaceId}
+              currentCell={currentCell}
+              inline
+            />
+          }
+        />
+        <OrganizationManager
+          user={user}
+          show={showOrgManager}
+          onClose={() => setShowOrgManager(false)}
+        />
+        {(currentSpaceId || (trialMode && !user)) && (
+          <div className="ui-stack svg-space-harness">
+            <div className="coms-container">
+              <div
+                className="chat-tooltip-row"
+                onMouseEnter={chatLocked ? () => setChatTooltipVisible(true) : undefined}
+                onMouseLeave={chatLocked ? () => setChatTooltipVisible(false) : undefined}
+              >
+                {chatLocked && chatTooltipVisible && (
+                  <>
+                    <span className="chat-tooltip-line" />
+                    <div className="chat-tooltip">login to access the chat window</div>
+                  </>
+                )}
+                <div className="chat-split">
+                  <button
+                    className={`shape-button chat-split-main${chatLocked ? ' shape-button--locked' : ''}`}
+                    onClick={() => {
+                      if (chatLocked) {
+                        setChatTooltipVisible((v) => !v);
+                        return;
+                      }
+                      handleToggleAllChats();
+                    }}
+                    title={chatLocked ? 'login to access the chat window' : 'Chat & AI'}
+                    aria-label={chatLocked ? 'login to access the chat window' : 'Chat & AI'}
+                  >
+                    ✦
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+        {!trialMode && (
+          <ChatWindowInstance
+            key={currentSpaceId ? `primary-${currentSpaceId}` : 'primary-no-space'}
+            windowId={0}
+            spaceId={currentSpaceId}
+            user={user}
+            isOpen={chatOpen}
+            onClose={handleClosePrimaryChat}
+            onCreateObject={onCreateObject}
+            onDiagramGenerated={handleChatDiagramGenerated}
+            onAddChat={() => handleAddChat(0)}
+            launchRequest={chatLaunchRequest}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <>
       {/* Pinned webcam overlay */}

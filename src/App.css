@@ -37,6 +37,13 @@ canvas {
   pointer-events: auto;
 }
 
+/* SVG space harness — minimal overlay: only the chat/AI launcher floats
+   below the top bar; everything else lives in the top bar itself. */
+.ui-stack.svg-space-harness {
+  top: 68px;
+  transform: none;
+}
+
 .ui-overlay {
   display: flex;
   flex-direction: column;
