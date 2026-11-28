@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { HexColorPicker } from 'react-colorful';
 import useSvgDrawStore from '../stores/svgDrawStore';
+import { notify } from '../stores/dialogStore';
 import { buildSvgDocument } from '../services/svgBuilder';
+import { saveSvgPlane } from '../services/svgPlaneService';
 
 // ---------------------------------------------------------------------------
 // SvgDrawOverlay2D — drawing panel for SVG spaces.
@@ -137,6 +139,7 @@ const SvgDrawOverlay2D = () => {
   const [colorPopopen, setColorPopopen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [textPlacement, setTextPlacement] = useState(null); // { x, y, value }
+  const [saving, setSaving] = useState(false);
 
   const svgRef = useRef(null);
 
@@ -153,6 +156,33 @@ const SvgDrawOverlay2D = () => {
     () => buildSvgDocument(draft ? [...elements, draft] : elements, canvasSize),
     [elements, draft, canvasSize]
   );
+
+  // --- save flow ------------------------------------------------------------
+
+  // Save the drawing as an SVG plane object: uploads the SVG through the
+  // backend storage API and creates the scene object on the plane grid
+  // (8 per row, wrapping to a new row underneath) in front of the camera.
+  const handleSave = useCallback(async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const result = await saveSvgPlane();
+      const col = (result.index % 8) + 1;
+      const row = Math.floor(result.index / 8) + 1;
+      notify(
+        `Drawing saved — SVG plane #${result.index + 1} placed in front of the camera (row ${row}, column ${col}).`,
+        { type: 'success', title: 'SVG saved' }
+      );
+    } catch (err) {
+      notify(err?.message || 'Failed to save the drawing.', {
+        type: 'error',
+        title: 'SVG save failed',
+        duration: 6000,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [saving]);
 
   // --- pointer handling -----------------------------------------------------
 
@@ -293,6 +323,16 @@ const SvgDrawOverlay2D = () => {
             aria-label="Clear drawing"
           >
             ✕
+          </button>
+          <button
+            type="button"
+            className="svg-draw-tool-btn svg-draw-save"
+            onClick={handleSave}
+            disabled={saving || (elements.length === 0 && !draft)}
+            title="Save drawing as an SVG plane in the space"
+            aria-label="Save drawing as an SVG plane in the space"
+          >
+            {saving ? '…' : '💾'}
           </button>
         </div>
       </div>

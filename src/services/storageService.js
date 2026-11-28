@@ -84,6 +84,29 @@ export const uploadMarkdownToStorage = async (markdown, userId, spaceId, fileNam
 };
 
 /**
+ * Upload an SVG document (string or File) to the backend storage API.
+ * Returns the storage URL of the uploaded document, mirroring
+ * uploadMarkdownToStorage.
+ */
+export const uploadSvgToStorage = async (svg, userId, spaceId, fileName) => {
+  if (!svg || !userId) throw new Error('SVG content and userId are required for upload');
+  let file;
+  if (typeof svg === 'string') {
+    const blob = new Blob([svg], { type: 'image/svg+xml' });
+    const name = fileName || `${uuidv4()}.svg`;
+    file = new File([blob], name, { type: 'image/svg+xml' });
+  } else if (svg instanceof File) {
+    file = svg;
+  } else {
+    throw new Error('SVG must be a string or File');
+  }
+  return uploadFileGeneric(file, userId, spaceId, 'svg', (snapshot) => {
+    const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+    console.log('SVG upload is ' + progress + '% done');
+  });
+};
+
+/**
  * Fetches stored diagram markdown text. The backend storage routes live behind
  * `authenticate`, so any URL pointing at our /api/storage endpoints must carry
  * the Bearer access token. Accepts an absolute backend URL (from
